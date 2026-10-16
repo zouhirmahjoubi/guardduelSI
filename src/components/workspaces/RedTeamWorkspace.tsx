@@ -7,7 +7,7 @@ import { RightPane } from './redteam/RightPane';
 import { sfx } from '@/utils/soundEngine';
 import { Swords } from 'lucide-react';
 import { useState } from 'react';
-import { computeKillChainProgress } from '@/data/attackSim';
+import { computeKillChainProgress, computeResilienceScore } from '@/data/attackSim';
 
 export function RedTeamWorkspace({ onCaptureFlag, onPurpleTeam }: { onCaptureFlag?: (flagId: string) => void; onPurpleTeam?: () => void; }) {
   const app = useApp();
@@ -66,7 +66,6 @@ export function RedTeamWorkspace({ onCaptureFlag, onPurpleTeam }: { onCaptureFla
         </div>
         <div className="flex-1 min-h-0">
           <BattleTerminal
-            guardrails={app.guardrails}
             patched={app.isPatched}
             onAttack={handleAttack}
             onBreach={() => {}}
@@ -80,7 +79,7 @@ export function RedTeamWorkspace({ onCaptureFlag, onPurpleTeam }: { onCaptureFla
       <div className={`w-80 shrink-0 ${showRightDrawer ? 'fixed inset-y-0 right-0 z-30 lg:relative lg:z-auto' : 'hidden lg:block'}`}>
         <RightPane
           patched={app.isPatched}
-          resilienceScore={app.currentRun?.metrics.attackSuccessRate != null ? 100 - app.currentRun.metrics.attackSuccessRate : (app.currentRun ? 100 : 0)}
+          resilienceScore={computeResilienceScore(app.currentRun?.metrics)}
           systemPrompt={app.systemPrompt}
           onApplyPatch={() => { app.applyPatch(); }}
           patchAnimating={app.patchAnimating}

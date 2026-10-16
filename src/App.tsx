@@ -181,6 +181,7 @@ function AppContent() {
           guardrails: app.guardrails,
         } as ExportConfig}
         currentRun={app.currentRun}
+        adhocResults={app.adhocResults}
       />
       <WorkspaceNav active={workspace} onSelect={setWorkspace} />
 

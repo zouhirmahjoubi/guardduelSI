@@ -7,6 +7,7 @@ import type {
   RunRecord,
   PatchProposal,
   PentestNote,
+  TestResult,
 } from '@/types';
 import { PRESETS, getHardenedPrompt, getHardenedGuardrails, getTestCases } from '@/data/presets';
 import {
@@ -14,7 +15,7 @@ import {
   generateRunId,
   generateConfigVersion,
 } from '@/data/attackSim';
-import { executeTestRun, createSnapshot } from '@/utils/execution';
+import { executeTestRun, executeSingleAttack, createSnapshot } from '@/utils/execution';
 import { createSupabaseClient, isSupabaseConfigured } from '@/utils/supabaseClient';
 import { usePersistentState } from '@/utils/storage';
 
@@ -40,6 +41,10 @@ interface AppContextValue {
   patchProposal: PatchProposal | null;
   isPatched: boolean;
   patchAnimating: boolean;
+  /** True when the current run was produced with a different configuration than the one now on screen */
+  isResultStale: boolean;
+  adhocResults: TestResult[];
+  runSingleAttack: (chipId: string, customPayload: string | null) => Promise<TestResult>;
   runTests: () => Promise<void>;
   proposePatch: () => void;
   applyPatch: () => Promise<void>;
@@ -71,9 +76,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   });
 
   const [preset, setPresetState] = useState<PresetConfig>(PRESETS[0]);
-  const [systemPrompt, setSystemPrompt] = useState(PRESETS[0].systemPrompt);
-  const [canaryToken, setCanaryToken] = useState(PRESETS[0].canaryToken);
-  const [guardrails, setGuardrails] = useState<GuardrailState>(DEFAULT_GUARDRAILS);
+  const [systemPrompt, setSystemPromptState] = useState(PRESETS[0].systemPrompt);
+  const [canaryToken, setCanaryTokenState] = useState(PRESETS[0].canaryToken);
+  const [guardrails, setGuardrailsState] = useState<GuardrailState>(DEFAULT_GUARDRAILS);
+  const [adhocResults, setAdhocResults] = useState<TestResult[]>([]);
 
   const [currentRun, setCurrentRun] = useState<RunRecord | null>(null);
   const [baselineRun, setBaselineRun] = useState<RunRecord | null>(null);
@@ -91,13 +97,38 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const retestRunRef = useRef<RunRecord | null>(null);
 
   const configVersion = generateConfigVersion(preset.id, systemPrompt, canaryToken, guardrails);
+  const isResultStale = currentRun !== null && currentRun.configVersion !== configVersion;
+
+  // Any user edit to defenses cancels in-flight work and drops conclusions drawn from the old config.
+  const invalidateAssessments = useCallback(() => {
+    abortRef.current?.abort();
+    setIsPatched(false);
+    setPatchProposal(null);
+    setRetestRun(null);
+    retestRunRef.current = null;
+  }, []);
+
+  const setSystemPrompt = useCallback((p: string) => {
+    if (p !== systemPrompt) invalidateAssessments();
+    setSystemPromptState(p);
+  }, [systemPrompt, invalidateAssessments]);
+
+  const setCanaryToken = useCallback((t: string) => {
+    if (t !== canaryToken) invalidateAssessments();
+    setCanaryTokenState(t);
+  }, [canaryToken, invalidateAssessments]);
+
+  const setGuardrails = useCallback((g: GuardrailState) => {
+    if (JSON.stringify(g) !== JSON.stringify(guardrails)) invalidateAssessments();
+    setGuardrailsState(g);
+  }, [guardrails, invalidateAssessments]);
 
   const setPreset = useCallback((p: PresetConfig) => {
     abortRef.current?.abort();
     setPresetState(p);
-    setSystemPrompt(p.systemPrompt);
-    setCanaryToken(p.canaryToken);
-    setGuardrails(p.guardrails);
+    setSystemPromptState(p.systemPrompt);
+    setCanaryTokenState(p.canaryToken);
+    setGuardrailsState(p.guardrails);
     setIsPatched(false);
     setPatchProposal(null);
     setBaselineRun(null);
@@ -155,7 +186,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     guardrailOverride: GuardrailState | null,
     canaryOverride: string | null,
     isRetest: boolean,
-  ) => {
+  ): Promise<RunRecord | null> => {
     // Cancel any in-progress run
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -177,7 +208,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         connection,
       );
 
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted) return null;
 
       const runId = generateRunId();
       const resultsWithRunId = results.map((r) => ({ ...r, runId }));
@@ -207,6 +238,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       } else {
         setBaselineRun(run);
       }
+      return run;
     } finally {
       setIsRunning(false);
       if (abortRef.current === controller) {
@@ -215,12 +247,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [preset, systemPrompt, canaryToken, guardrails, connection]);
 
+  const runSingleAttack = useCallback(async (chipId: string, customPayload: string | null): Promise<TestResult> => {
+    const snapshot = createSnapshot(preset, systemPrompt, canaryToken, guardrails, mode, configVersion);
+    const result = await executeSingleAttack(chipId, customPayload, snapshot, connection);
+    const stamped: TestResult = { ...result, runId: `ADHOC-${Date.now().toString(36).toUpperCase()}` };
+    setAdhocResults((prev) => [...prev.slice(-99), stamped]);
+    return stamped;
+  }, [preset, systemPrompt, canaryToken, guardrails, mode, configVersion, connection]);
+
   const runTests = useCallback(async () => {
     await runTestsWithConfig(mode, null, null, null, isPatched);
   }, [mode, isPatched, runTestsWithConfig]);
 
   const proposePatch = useCallback(() => {
-    if (!baselineRun) return;
+    if (!baselineRun || baselineRun.configVersion !== configVersion) return;
     const failures = baselineRun.results.filter((r) => r.outcome === 'breach');
     if (failures.length === 0) return;
 
@@ -243,19 +283,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
       baselineRunId: baselineRun.id,
       retestRunId: null,
     });
-  }, [baselineRun, preset, systemPrompt, guardrails]);
+  }, [baselineRun, configVersion, preset, systemPrompt, guardrails]);
 
   const applyPatch = useCallback(async () => {
     if (!patchProposal || patchProposal.applied) return;
 
     setPatchAnimating(true);
-    setSystemPrompt(patchProposal.afterPrompt);
-    setGuardrails(patchProposal.afterGuardrails);
+    setSystemPromptState(patchProposal.afterPrompt);
+    setGuardrailsState(patchProposal.afterGuardrails);
     setIsPatched(true);
 
     try {
-      await runTestsWithConfig(mode, patchProposal.afterPrompt, patchProposal.afterGuardrails, canaryToken, true);
-      setPatchProposal((prev) => prev ? { ...prev, applied: true, retestRunId: retestRunRef.current?.id ?? null } : null);
+      const retest = await runTestsWithConfig(mode, patchProposal.afterPrompt, patchProposal.afterGuardrails, canaryToken, true);
+      if (retest) {
+        setPatchProposal((prev) => prev && prev.id === patchProposal.id ? { ...prev, applied: true, retestRunId: retest.id } : prev);
+      }
     } finally {
       setPatchAnimating(false);
     }
@@ -286,7 +328,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       systemPrompt, setSystemPrompt,
       canaryToken, setCanaryToken,
       guardrails, setGuardrails,
-      configVersion,
+      configVersion, isResultStale,
+      adhocResults, runSingleAttack,
       currentRun, baselineRun, retestRun, runHistory, isRunning,
       patchProposal, isPatched, patchAnimating,
       runTests, proposePatch, applyPatch, resetPatching,
@@ -297,6 +340,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useApp() {
   const ctx = useContext(AppContext);
   if (!ctx) throw new Error('useApp must be used within AppProvider');

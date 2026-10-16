@@ -1,15 +1,56 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Terminal, Radio, Image as ImageIcon, Send, Play, RotateCcw } from 'lucide-react';
 import { EXPLOIT_CHIPS } from '@/data/presets';
-import { simulateAttack, generateHttpPacket, classifyPayload } from '@/data/attackSim';
-import type { AttackLogEntry, HttpPacket, GuardrailState } from '@/types';
+import { generateHttpPacket, classifyPayload, getAttackMeta, computeKillChainProgress } from '@/data/attackSim';
+import type { AttackLogEntry, HttpPacket, TestResult, TestOutcome, PresetConfig } from '@/types';
 import { sfx } from '@/utils/soundEngine';
 import { toBase64, toROT13, toLeetspeak, toHex } from '@/utils/downloads';
 import { CTF_FLAGS } from '@/utils/ctf';
 import { useApp } from '@/state/AppContext';
 
+type ResultLabel = AttackLogEntry['result'] & HttpPacket['result'];
+
+const OUTCOME_LABEL: Record<TestOutcome, ResultLabel> = {
+  breach: 'BREACH',
+  blocked: 'BLOCKED',
+  decoy: 'DECOY',
+  error: 'ERROR',
+  not_assessed: 'NOT_ASSESSED',
+  pass: 'PASS',
+  false_positive: 'FALSE_POSITIVE',
+};
+
+const STATUS_TEXT: Record<ResultLabel, string> = {
+  BREACH: '200 BREACH',
+  BLOCKED: '403 BLOCKED',
+  DECOY: '200 DECOY',
+  ERROR: '502 ERROR',
+  NOT_ASSESSED: '200 NOT ASSESSED',
+  PASS: '200 PASS',
+  FALSE_POSITIVE: '403 FALSE POSITIVE',
+};
+
+function buildPacket(id: number, chipId: string, payload: string, result: TestResult, preset: PresetConfig): HttpPacket {
+  const label = OUTCOME_LABEL[result.outcome];
+  const status = Number(STATUS_TEXT[label].split(' ')[0]);
+  if (result.mode === 'simulation') {
+    const simLabel = label === 'BREACH' || label === 'DECOY' || label === 'ERROR' ? label : 'BLOCKED';
+    const { request, response } = generateHttpPacket(chipId, payload, simLabel, preset);
+    return { id, method: 'POST', endpoint: '/v1/chat/completions', status, statusText: STATUS_TEXT[label], request, response, result: label };
+  }
+  const request = JSON.stringify({ action: 'chat', payload: payload.slice(0, 500), presetId: preset.id, _mode: 'live' }, null, 2);
+  const response = JSON.stringify({
+    response: result.responseText.slice(0, 1000),
+    outcome: result.outcome,
+    evidence: result.evidence,
+    latencyMs: result.latencyMs,
+    tokensUsed: result.tokensUsed,
+    ...(result.error ? { error: result.error } : {}),
+  }, null, 2);
+  return { id, method: 'POST', endpoint: 'functions/v1/llm-proxy', status, statusText: STATUS_TEXT[label], request, response, result: label };
+}
+
 interface BattleTerminalProps {
-  guardrails: GuardrailState;
   patched: boolean;
   onAttack: (chipId: string, result: 'BREACH' | 'BLOCKED' | 'DECOY' | 'ERROR' | 'NOT_ASSESSED', killChainProgress: number) => void;
   onBreach: () => void;
@@ -19,11 +60,11 @@ interface BattleTerminalProps {
 
 type ObfMethod = 'none' | 'base64' | 'rot13' | 'leet' | 'hex';
 
-export function BattleTerminal({ guardrails, patched: _patched, onAttack, onBreach, onDeflect, onCaptureFlag }: BattleTerminalProps) {
+export function BattleTerminal({ patched: _patched, onAttack, onBreach, onDeflect, onCaptureFlag }: BattleTerminalProps) {
   const app = useApp();
   const [tab, setTab] = useState<'battle' | 'intercept' | 'stego'>('battle');
   const [logs, setLogs] = useState<AttackLogEntry[]>([
-    { id: 0, timestamp: '00:00:01', attacker: 'SYSTEM', technique: 'Initialization', payload: 'guardduelSI Red-Team Engine v2.1', result: 'BLOCKED', detail: 'Engine ready. Select an attack vector. All responses are simulated.' },
+    { id: 0, timestamp: '00:00:01', attacker: 'SYSTEM', technique: 'Initialization', payload: 'guardduelSI Red-Team Engine v2.1', result: 'BLOCKED', detail: 'Engine ready. Select an attack vector.' },
   ]);
   const [packets, setPackets] = useState<HttpPacket[]>([]);
   const [customPrompt, setCustomPrompt] = useState('');
@@ -31,12 +72,13 @@ export function BattleTerminal({ guardrails, patched: _patched, onAttack, onBrea
   const [obfPreview, setObfPreview] = useState('');
   const [terminalOutput, setTerminalOutput] = useState<string[]>([
     'guardduelSI Red-Team Engine v2.1',
-    'Simulation Mode — all responses are synthetic.',
+    'Attacks run in the active mode: Simulation (synthetic) or Live (real model).',
     'Type an attack prompt or click an exploit chip below.',
     '',
   ]);
   const [selectedPacket, setSelectedPacket] = useState<HttpPacket | null>(null);
   const [replayText, setReplayText] = useState('');
+  const [busy, setBusy] = useState(false);
   const [stegoFileName, setStegoFileName] = useState<string | null>(null);
   const logIdRef = useRef(0);
   const packetIdRef = useRef(0);
@@ -58,99 +100,79 @@ export function BattleTerminal({ guardrails, patched: _patched, onAttack, onBrea
     }
   }, [customPrompt, obfMethod]);
 
-  const runAttack = useCallback((chipId: string, payload: string, isCustom = false) => {
-    // Preserve both original and transformed payloads when obfuscation is used
-    const finalPayload = obfMethod !== 'none' && obfPreview
+  const runAttack = useCallback(async (chipId: string, payload: string, isCustom = false) => {
+    const finalPayload = isCustom && obfMethod !== 'none' && obfPreview
       ? `[${obfMethod.toUpperCase()}] ${obfPreview}`
       : payload;
 
-    // Pass the actual payload (original or obfuscated) and the active preset + canary
-    const result = simulateAttack(
-      chipId,
-      isCustom ? finalPayload : null,
-      guardrails,
-      app.preset,
-      app.canaryToken,
-    );
+    setBusy(true);
+    let result: TestResult;
+    try {
+      result = await app.runSingleAttack(chipId, isCustom ? finalPayload : null);
+    } finally {
+      setBusy(false);
+    }
 
-    const id = ++logIdRef.current;
-    const now = new Date();
-    const ts = now.toTimeString().split(' ')[0];
+    const label = OUTCOME_LABEL[result.outcome];
+    const meta = getAttackMeta(chipId);
+    const ts = new Date().toTimeString().split(' ')[0];
+    const technique = meta?.technique ?? 'Custom payload';
 
-    const entry: AttackLogEntry = {
-      id,
+    setLogs((prev) => [...prev, {
+      id: ++logIdRef.current,
       timestamp: ts,
-      attacker: result.detail.split('.')[0].includes('Hijacker') ? 'Persona Hijacker' :
-                result.detail.includes('Extractor') ? 'System Extractor' :
-                result.detail.includes('Exploiter') ? 'Logic Exploiter' : 'Payload Injector',
-      technique: result.detail.split('.')[0],
+      attacker: meta?.attacker ?? 'Custom Operator',
+      technique,
       payload: finalPayload.slice(0, 80),
-      result: result.result,
+      result: label,
       detail: result.detail,
-    };
+    }]);
 
-    setLogs((prev) => [...prev, entry]);
-
-    const newLines = [
-      `$ [${ts}] ATTACK: ${entry.technique}`,
+    const labelText = label === 'NOT_ASSESSED' ? 'NOT ASSESSED' : label;
+    setTerminalOutput((prev) => [
+      ...prev,
+      `$ [${ts}] ATTACK (${result.mode.toUpperCase()}): ${technique}`,
       `  Payload: ${finalPayload.slice(0, 60)}${finalPayload.length > 60 ? '...' : ''}`,
-      `  Result: [${result.result}] ${result.detail}`,
-      `  OWASP: ${result.owaspCategory} | MITRE: ${result.mitreTechnique}`,
+      `  Result: [${labelText}] ${result.detail}`,
+      `  OWASP: ${meta?.owasp ?? 'N/A'} | MITRE: ${meta?.mitre ?? 'N/A'}`,
       result.responseText.slice(0, 200),
       '',
-    ];
-    setTerminalOutput((prev) => [...prev, ...newLines]);
+    ]);
 
-    const { request, response } = generateHttpPacket(chipId, finalPayload, result.result === 'BREACH' ? 'BREACH' : result.result === 'BLOCKED' ? 'BLOCKED' : result.result === 'DECOY' ? 'DECOY' : result.result === 'ERROR' ? 'ERROR' : 'BLOCKED', app.preset);
-    const pkt: HttpPacket = {
-      id: ++packetIdRef.current,
-      method: 'POST',
-      endpoint: '/v1/chat/completions',
-      status: result.result === 'BREACH' ? 200 : result.result === 'BLOCKED' ? 403 : 200,
-      statusText: result.result === 'BREACH' ? '200 BREACH' : result.result === 'BLOCKED' ? '403 BLOCKED' : result.result === 'DECOY' ? '200 DECOY' : result.result === 'NOT_ASSESSED' ? '200 NOT ASSESSED' : '500 ERROR',
-      request,
-      response,
-      result: result.result,
-    };
-    setPackets((prev) => [...prev, pkt]);
+    setPackets((prev) => [...prev, buildPacket(++packetIdRef.current, chipId, finalPayload, result, app.preset)]);
 
-    if (result.result === 'BREACH') {
+    if (label === 'BREACH') {
       sfx.breach();
       onBreach();
-    } else if (result.result === 'BLOCKED' || result.result === 'DECOY') {
+    } else if (label === 'BLOCKED' || label === 'DECOY') {
       sfx.shield();
       onDeflect();
     }
 
-    onAttack(chipId, result.result === 'PASS' || result.result === 'FALSE_POSITIVE' ? 'BLOCKED' : result.result, result.killChainProgress);
-  }, [obfMethod, obfPreview, guardrails, app.preset, app.canaryToken, onAttack, onBreach, onDeflect]);
+    const attackLabel = label === 'PASS' || label === 'FALSE_POSITIVE' ? 'BLOCKED' : label;
+    onAttack(chipId, attackLabel, computeKillChainProgress([result]));
+  }, [obfMethod, obfPreview, app, onAttack, onBreach, onDeflect]);
 
   const handleSend = () => {
-    if (!customPrompt.trim()) return;
-    const classified = classifyPayload(customPrompt);
-    const chipId = classified || 'prompt-injection';
+    if (!customPrompt.trim() || busy) return;
+    const chipId = classifyPayload(customPrompt) ?? 'custom';
     runAttack(chipId, customPrompt, true);
     setCustomPrompt('');
   };
 
-  const handleReplay = () => {
-    if (!replayText.trim() || !selectedPacket) return;
-    const classified = classifyPayload(replayText);
-    const chipId = classified || 'prompt-injection';
-    const result = simulateAttack(chipId, replayText, guardrails, app.preset, app.canaryToken);
-    const { request, response } = generateHttpPacket(chipId, replayText, result.result === 'BREACH' ? 'BREACH' : result.result === 'BLOCKED' ? 'BLOCKED' : result.result === 'DECOY' ? 'DECOY' : result.result === 'ERROR' ? 'ERROR' : 'BLOCKED', app.preset);
-    const pkt: HttpPacket = {
-      id: ++packetIdRef.current,
-      method: 'POST',
-      endpoint: '/v1/chat/completions',
-      status: result.result === 'BREACH' ? 200 : 403,
-      statusText: result.result === 'BREACH' ? '200 BREACH' : '403 BLOCKED',
-      request, response,
-      result: result.result,
-    };
-    setPackets((prev) => [...prev, pkt]);
-    setSelectedPacket(pkt);
-    sfx.chirp();
+  const handleReplay = async () => {
+    if (!replayText.trim() || !selectedPacket || busy) return;
+    const chipId = classifyPayload(replayText) ?? 'custom';
+    setBusy(true);
+    try {
+      const result = await app.runSingleAttack(chipId, replayText);
+      const pkt = buildPacket(++packetIdRef.current, chipId, replayText, result, app.preset);
+      setPackets((prev) => [...prev, pkt]);
+      setSelectedPacket(pkt);
+      sfx.chirp();
+    } finally {
+      setBusy(false);
+    }
   };
 
   const clearLogs = () => {
@@ -217,7 +239,7 @@ export function BattleTerminal({ guardrails, patched: _patched, onAttack, onBrea
                   className="flex-1 bg-obsidian-900 border border-obsidian-700 rounded-md px-2 py-1.5 text-[11px] font-mono text-slate-300 focus:outline-none focus:border-cyan-500/50"
                   aria-label="Custom attack prompt"
                 />
-                <button className="btn-crimson flex items-center gap-1" onClick={handleSend}>
+                <button className="btn-crimson flex items-center gap-1 disabled:opacity-50" onClick={handleSend} disabled={busy}>
                   <Send size={11} /> Fire
                 </button>
               </div>
@@ -305,7 +327,7 @@ export function BattleTerminal({ guardrails, patched: _patched, onAttack, onBrea
               <div className="border-t border-obsidian-700 pt-2 space-y-2 overflow-auto max-h-[40%]">
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] text-slate-500 uppercase">Packet Repeater — Edit & Replay</span>
-                  <button className="btn-crimson flex items-center gap-1" onClick={handleReplay}>
+                  <button className="btn-crimson flex items-center gap-1 disabled:opacity-50" onClick={handleReplay} disabled={busy}>
                     <Play size={10} /> Replay
                   </button>
                 </div>

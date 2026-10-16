@@ -6,7 +6,7 @@ import { Modal } from './ui/Modal';
 import { exportGuardrailFile, exportReportFiles, type ExportConfig } from '@/utils/exports';
 import { BRAND } from '@/data/brand';
 import { motion } from 'framer-motion';
-import type { ExecutionMode, ConnectionState, RunRecord } from '@/types';
+import type { ExecutionMode, ConnectionState, RunRecord, TestResult } from '@/types';
 
 interface CommandBarProps {
   onJudgeTour: () => void;
@@ -24,6 +24,7 @@ interface CommandBarProps {
   onCheckConnection: () => void;
   exportConfig?: ExportConfig | null;
   currentRun?: RunRecord | null;
+  adhocResults?: TestResult[];
 }
 
 export function CommandBar({
@@ -31,7 +32,7 @@ export function CommandBar({
   ctfCount = 0, ctfTotal = 5, onPurpleTeam,
   ctfBadgeOpen = false, onCloseCtfBadge, onResetCtf,
   mode, onModeChange, connection, onCheckConnection,
-  exportConfig = null, currentRun = null,
+  exportConfig = null, currentRun = null, adhocResults = [],
 }: CommandBarProps) {
   const [sfxOn, setSfxOn] = useState(isSfxEnabled());
   const [configHash, setConfigHash] = useState('');
@@ -259,7 +260,7 @@ export function CommandBar({
           </div>
           <div className="flex justify-end gap-2">
             <button className="btn-tactical" onClick={() => downloadNDA()}>Download NDA Template (.md)</button>
-            <button className="btn-emerald" onClick={() => { exportReportFiles(currentRun); sfx.success(); }}>
+            <button className="btn-emerald" onClick={() => { exportReportFiles(currentRun, adhocResults); sfx.success(); }}>
               Download Report (.md + .json)
             </button>
           </div>

@@ -1,6 +1,6 @@
 import { downloadFile, downloadJSON, downloadMD, sha256 } from '@/utils/downloads';
 import { BRAND } from '@/data/brand';
-import type { RunRecord, GuardrailState, PresetConfig } from '@/types';
+import type { RunRecord, GuardrailState, PresetConfig, TestResult } from '@/types';
 
 export type GuardrailExportType = 'ts' | 'py' | 'ci' | 'promptfoo' | 'garak' | 'md';
 
@@ -119,21 +119,26 @@ async def guardduelsi_guardrail(request: Request, call_next):
 
     response = await call_next(request)
 
-    # Canary check: collect response body without consuming the iterator
-    # Use a background task to avoid blocking the response
-    response_body = b""
+    # Capture the original iterator BEFORE replacing it; the wrapper must
+    # stream from the original, never from itself.
+    original_iterator = response.body_iterator
+    canary_bytes = CANARY_TOKEN.encode()
+    client_host = request.client.host if request.client else "unknown"
 
-    async def collect_and_check():
-        nonlocal response_body
-        async for chunk in response.body_iterator:
-            response_body += chunk
+    async def stream_and_check(source):
+        tail = b""
+        async for chunk in source:
+            if isinstance(chunk, str):
+                chunk = chunk.encode()
+            # Keep a small tail so a token split across chunks is still detected
+            window = tail + chunk
+            if canary_bytes in window:
+                import logging
+                logging.error(f"CANARY LEAK from {client_host}")
+            tail = window[-(len(canary_bytes) - 1):] if len(canary_bytes) > 1 else b""
             yield chunk
-        # Check after all chunks have been sent
-        if CANARY_TOKEN.encode() in response_body:
-            import logging
-            logging.error(f"CANARY LEAK from {request.client.host if request.client else 'unknown'}")
 
-    response.body_iterator = collect_and_check()
+    response.body_iterator = stream_and_check(original_iterator)
     return response
 `;
 }
@@ -295,7 +300,19 @@ export function exportGuardrails(config?: ExportConfig | null) {
   exportGuardrailFile('md', 'guardduelsi-guardrails.md', config);
 }
 
-export function generateReportMarkdown(run: RunRecord | null): string {
+function adhocMarkdown(adhoc: TestResult[]): string {
+  if (adhoc.length === 0) return '';
+  return `
+## Manual Terminal Attacks
+Individual attacks fired or replayed from the Red-Team terminal. These are not included in the run metrics above.
+
+| # | Time | Mode | Test Case | Outcome | Detail |
+|---|------|------|-----------|---------|--------|
+${adhoc.map((r, i) => `| ${i + 1} | ${r.timestamp} | ${r.mode} | ${escapeMDTable(r.testCaseLabel)} | ${r.outcome} | ${escapeMDTable(r.detail.slice(0, 80))} |`).join('\n')}
+`;
+}
+
+export function generateReportMarkdown(run: RunRecord | null, adhoc: TestResult[] = []): string {
   if (!run) {
     return `# guardduelSI Audit Report
 
@@ -303,7 +320,7 @@ Generated: ${new Date().toISOString()}
 
 ## No Session Data
 No test run data available. Run baseline tests in the Red-Team workspace, then export.
-
+${adhocMarkdown(adhoc)}
 ## Framework Reference Mappings
 - OWASP LLM Top 10 (2023): reference mapping supported by specific tests
 - MITRE ATLAS: reference mapping for attack techniques
@@ -385,7 +402,7 @@ ${run.results.filter((r) => r.outcome === 'breach' || r.outcome === 'false_posit
 - Timestamp: ${r.timestamp}
 - Evidence: ${r.evidence}
 - Response (truncated): ${r.responseText.slice(0, 200)}`).join('\n\n')}
-
+${adhocMarkdown(adhoc)}
 ## Framework Reference Mappings
 - OWASP LLM Top 10 (2023): tested attacks map to LLM01 (Prompt Injection) and LLM02 (Insecure Output Handling)
 - MITRE ATLAS: attack techniques mapped to T1552 (Unsecured Credentials), T1190 (Exploit Public-Facing Application)
@@ -404,13 +421,29 @@ The NDA is an unsigned template — no signing process is implemented.
 `;
 }
 
-export function generateReportJSON(run: RunRecord | null): Record<string, unknown> {
+function adhocJSON(adhoc: TestResult[]) {
+  return adhoc.map((r) => ({
+    runId: r.runId,
+    mode: r.mode,
+    testCaseId: r.testCaseId,
+    testCaseLabel: r.testCaseLabel,
+    outcome: r.outcome,
+    detail: r.detail,
+    timestamp: r.timestamp,
+    latencyMs: r.latencyMs,
+    tokensUsed: r.tokensUsed,
+    evidence: r.evidence,
+  }));
+}
+
+export function generateReportJSON(run: RunRecord | null, adhoc: TestResult[] = []): Record<string, unknown> {
   if (!run) {
     return {
       schemaVersion: 1,
       product: BRAND.displayName,
       generated: new Date().toISOString(),
       message: 'No session data available',
+      manualAttacks: adhocJSON(adhoc),
     };
   }
 
@@ -443,6 +476,7 @@ export function generateReportJSON(run: RunRecord | null): Record<string, unknow
       tokensUsed: r.tokensUsed,
       evidence: r.evidence,
     })),
+    manualAttacks: adhocJSON(adhoc),
     knownLimitations: [
       run.mode === 'simulation'
         ? 'Simulation mode uses deterministic rules, not real model responses.'
@@ -453,9 +487,9 @@ export function generateReportJSON(run: RunRecord | null): Record<string, unknow
   };
 }
 
-export function exportReportFiles(run: RunRecord | null = null) {
-  downloadMD(`guardduelsi-audit-report.md`, generateReportMarkdown(run));
-  downloadJSON(`guardduelsi-telemetry.json`, generateReportJSON(run));
+export function exportReportFiles(run: RunRecord | null = null, adhoc: TestResult[] = []) {
+  downloadMD(`guardduelsi-audit-report.md`, generateReportMarkdown(run, adhoc));
+  downloadJSON(`guardduelsi-telemetry.json`, generateReportJSON(run, adhoc));
 }
 
 export function exportComplianceReport() {

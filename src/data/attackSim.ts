@@ -391,6 +391,18 @@ export function computeMetrics(results: TestResult[]): RunMetrics {
   };
 }
 
+/** Resilience = 100 - attack success rate. Null when no attack produced an assessable outcome. */
+export function computeResilienceScore(metrics: RunMetrics | null | undefined): number | null {
+  if (!metrics || metrics.attackSuccessRate === null) return null;
+  return 100 - metrics.attackSuccessRate;
+}
+
+export function getAttackMeta(chipId: string): { attacker: string; technique: string; owasp: string; mitre: string } | null {
+  const meta = ATTACK_META[chipId];
+  if (!meta) return null;
+  return { attacker: meta.attacker, technique: meta.technique, owasp: meta.owasp, mitre: meta.mitre };
+}
+
 export function generateRunId(): string {
   return `GUARDDUELSI-${Date.now().toString(36).toUpperCase()}`;
 }

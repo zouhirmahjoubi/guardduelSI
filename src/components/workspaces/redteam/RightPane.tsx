@@ -9,7 +9,7 @@ import type { RunRecord, PatchProposal } from '@/types';
 
 interface RightPaneProps {
   patched: boolean;
-  resilienceScore: number;
+  resilienceScore: number | null;
   systemPrompt: string;
   onApplyPatch: () => void;
   patchAnimating: boolean;
@@ -62,19 +62,23 @@ export function RightPane({
                 strokeWidth="8" strokeLinecap="round"
                 strokeDasharray={2 * Math.PI * 50}
                 initial={{ strokeDashoffset: 2 * Math.PI * 50 }}
-                animate={{ strokeDashoffset: 2 * Math.PI * 50 * (1 - resilienceScore / 100) }}
+                animate={{ strokeDashoffset: 2 * Math.PI * 50 * (1 - (resilienceScore ?? 0) / 100) }}
                 transition={{ duration: 1.5, ease: 'easeOut' }}
                 style={{ filter: `drop-shadow(0 0 6px ${patched ? 'rgba(16,185,129,0.6)' : 'rgba(239,68,68,0.6)'})` }}
               />
             </svg>
             <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <AnimatedCounter
-                value={resilienceScore}
-                suffix="%"
-                className={`text-2xl font-bold ${patched ? 'text-emerald-400' : 'text-crimson-400'}`}
-              />
-              <div className={`text-[8px] uppercase ${patched ? 'text-emerald-500' : 'text-crimson-500'}`}>
-                {patched ? 'HARDENED' : currentRun ? 'ASSESSED' : 'NO RUN'}
+              {resilienceScore === null ? (
+                <div className="text-sm font-bold text-slate-400 text-center leading-tight">Not<br />assessed</div>
+              ) : (
+                <AnimatedCounter
+                  value={resilienceScore}
+                  suffix="%"
+                  className={`text-2xl font-bold ${patched ? 'text-emerald-400' : 'text-crimson-400'}`}
+                />
+              )}
+              <div className={`text-[8px] uppercase ${resilienceScore === null ? 'text-slate-500' : patched ? 'text-emerald-500' : 'text-crimson-500'}`}>
+                {!currentRun ? 'NO RUN' : resilienceScore === null ? 'NO SCORABLE ATTACKS' : patched ? 'HARDENED' : 'ASSESSED'}
               </div>
             </div>
           </div>

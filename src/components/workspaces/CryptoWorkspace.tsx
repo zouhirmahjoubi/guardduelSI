@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { Atom, Lock, Key, Hash, Zap, Activity, Binary, Shield, TrendingUp } from 'lucide-react';
 import { sfx } from '@/utils/soundEngine';
 import { motion } from 'framer-motion';

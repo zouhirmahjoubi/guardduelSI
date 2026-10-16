@@ -215,5 +215,9 @@ export interface LiveExecutionResult {
   latencyMs: number;
   tokensUsed: number | null;
   model: string;
+  /** Set by the proxy when a server-side guardrail stopped the request or response */
+  blocked: boolean;
+  guardrail: string | null;
+  canaryLeaked: boolean;
   error?: string;
 }
