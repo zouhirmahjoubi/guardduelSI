@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Globe, Search, Shield, Bug, Database, Eye, Cloud, Lock, Zap, Terminal, Wrench } from 'lucide-react';
 import { sfx } from '@/utils/soundEngine';
 import { Toggle } from '@/components/ui/Modal';
+import { CTF_FLAGS } from '@/utils/ctf';
 
 interface OSINTResult {
   type: string;
@@ -270,7 +271,7 @@ export function OSINTWorkspace({ onCaptureFlag }: { onCaptureFlag?: (flagId: str
                       className="text-[9px] font-bold text-amber-500 hover:text-amber-400 transition-colors"
                       onClick={() => { if (onCaptureFlag) onCaptureFlag('flag-shroud'); sfx.flagCapture(); }}
                     >
-                      🚩 FLAG{AEGIS_SHROUD_65535}
+                      🚩 {CTF_FLAGS.find((f) => f.id === 'flag-shroud')?.flag ?? 'FLAG{GUARDDUELSI_SHROUD_65535}'}
                     </button>
                   </div>
                 )}

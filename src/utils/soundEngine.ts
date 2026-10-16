@@ -7,7 +7,8 @@ let enabled = true;
 function getCtx(): AudioContext | null {
   if (typeof window === 'undefined') return null;
   if (!ctx) {
-    ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const Ctor = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    ctx = new Ctor();
     masterGain = ctx.createGain();
     masterGain.gain.value = 0.15;
     masterGain.connect(ctx.destination);

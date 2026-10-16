@@ -12,6 +12,51 @@ interface ModalProps {
 }
 
 export function Modal({ open, onClose, title, icon, children, maxWidth = 'max-w-3xl' }: ModalProps) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const previousFocus = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+
+    previousFocus.current = document.activeElement as HTMLElement;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+      if (e.key === 'Tab' && panelRef.current) {
+        const focusable = panelRef.current.querySelectorAll<HTMLElement>(
+          'button, [href], input, textarea, select, [tabindex]:not([tabindex="-1"])',
+        );
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+
+    const timeout = setTimeout(() => {
+      closeRef.current?.focus();
+    }, 100);
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      clearTimeout(timeout);
+      previousFocus.current?.focus();
+    };
+  }, [open, onClose]);
+
   return (
     <AnimatePresence>
       {open && (
@@ -21,8 +66,12 @@ export function Modal({ open, onClose, title, icon, children, maxWidth = 'max-w-
           exit={{ opacity: 0 }}
           className="fixed inset-0 z-[200] bg-obsidian-950/80 backdrop-blur-sm flex items-center justify-center p-4"
           onClick={onClose}
+          role="dialog"
+          aria-modal="true"
+          aria-label={title}
         >
           <motion.div
+            ref={panelRef}
             initial={{ scale: 0.9, opacity: 0, y: 20 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.9, opacity: 0, y: 20 }}
@@ -35,7 +84,12 @@ export function Modal({ open, onClose, title, icon, children, maxWidth = 'max-w-
                 {icon}
                 <span>{title}</span>
               </div>
-              <button onClick={onClose} className="text-slate-500 hover:text-slate-300 transition-colors">
+              <button
+                ref={closeRef}
+                onClick={onClose}
+                className="text-slate-500 hover:text-slate-300 transition-colors"
+                aria-label="Close dialog"
+              >
                 <X size={16} />
               </button>
             </div>
@@ -60,6 +114,8 @@ export function Toggle({
     <button
       className={`toggle ${on ? colorOn : 'bg-obsidian-600'}`}
       onClick={() => onChange(!on)}
+      role="switch"
+      aria-checked={on}
     >
       <span className={`toggle-knob ${on ? 'translate-x-4' : 'translate-x-0.5'}`} />
     </button>
@@ -78,7 +134,6 @@ export function ThreatBadge({ level, label }: { level: string; label?: string })
   return <span className={cls}>{label || level}</span>;
 }
 
-// Animated counter using GSAP
 export function AnimatedCounter({
   value,
   duration = 1.5,

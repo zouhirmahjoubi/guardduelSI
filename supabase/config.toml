@@ -1,0 +1,4 @@
+project_id = "guardduelsi"
+
+[functions.llm-proxy]
+verify_jwt = true

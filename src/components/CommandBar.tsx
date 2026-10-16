@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Shield, Hash, Zap, Target, FileText, Volume2, VolumeX, Sparkles, KeyRound, Download, Swords, Flag, Trophy, RotateCcw } from 'lucide-react';
+import { Shield, Zap, Target, FileText, Volume2, VolumeX, Sparkles, KeyRound, Download, Swords, Flag, Trophy, RotateCcw, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { sfx, setSfxEnabled, isSfxEnabled } from '@/utils/soundEngine';
-import { sha256, downloadMD } from '@/utils/downloads';
-import { Modal, Toggle } from './ui/Modal';
-import { exportGuardrails, exportComplianceReport } from '@/utils/exports';
+import { sha256, downloadFile } from '@/utils/downloads';
+import { Modal } from './ui/Modal';
+import { exportGuardrailFile, exportReportFiles } from '@/utils/exports';
+import { BRAND } from '@/data/brand';
 import { motion } from 'framer-motion';
+import type { ExecutionMode, ConnectionState } from '@/types';
 
 interface CommandBarProps {
   onJudgeTour: () => void;
@@ -16,27 +18,30 @@ interface CommandBarProps {
   ctfBadgeOpen?: boolean;
   onCloseCtfBadge?: () => void;
   onResetCtf?: () => void;
+  mode: ExecutionMode;
+  onModeChange: (m: ExecutionMode) => void;
+  connection: ConnectionState;
+  onCheckConnection: () => void;
 }
 
-export function CommandBar({ onJudgeTour, motionReduced, onMotionToggle, ctfCount = 0, ctfTotal = 5, onPurpleTeam, ctfBadgeOpen = false, onCloseCtfBadge, onResetCtf }: CommandBarProps) {
+export function CommandBar({
+  onJudgeTour, motionReduced, onMotionToggle,
+  ctfCount = 0, ctfTotal = 5, onPurpleTeam,
+  ctfBadgeOpen = false, onCloseCtfBadge, onResetCtf,
+  mode, onModeChange, connection, onCheckConnection,
+}: CommandBarProps) {
   const [sfxOn, setSfxOn] = useState(isSfxEnabled());
-  const [hash, setHash] = useState('sha256:9f86d0...');
-  const [latency] = useState('+12ms');
-  const [tokenSaved] = useState(47283);
-  const [mode, setMode] = useState<'instant' | 'live'>('instant');
+  const [configHash, setConfigHash] = useState('');
   const [apiModal, setApiModal] = useState(false);
   const [guardrailModal, setGuardrailModal] = useState(false);
   const [complianceModal, setComplianceModal] = useState(false);
-  const [guardrailContent, setGuardrailContent] = useState('');
 
   useEffect(() => {
     const updateHash = async () => {
-      const h = await sha256('AegisAI-SecOps-Command-v1-' + Date.now().toString().slice(0, -4));
-      setHash(`sha256:${h.slice(0, 12)}...`);
+      const h = await sha256('guardduelSI-config-v1');
+      setConfigHash(h.slice(0, 12));
     };
     updateHash();
-    const interval = setInterval(updateHash, 10000);
-    return () => clearInterval(interval);
   }, []);
 
   const toggleSfx = useCallback(() => {
@@ -46,11 +51,11 @@ export function CommandBar({ onJudgeTour, motionReduced, onMotionToggle, ctfCoun
     if (newVal) sfx.toggle();
   }, [sfxOn]);
 
-  const handleModeSwitch = (m: 'instant' | 'live') => {
+  const handleModeSwitch = (m: ExecutionMode) => {
     if (m === 'live') {
       setApiModal(true);
     } else {
-      setMode(m);
+      onModeChange(m);
       sfx.tab();
     }
   };
@@ -65,148 +70,140 @@ export function CommandBar({ onJudgeTour, motionReduced, onMotionToggle, ctfCoun
     sfx.chirp();
   };
 
+  const connectionStatusColor = connection.status === 'connected' ? 'text-emerald-400' : connection.status === 'error' ? 'text-crimson-400' : 'text-slate-500';
+  const connectionStatusLabel = connection.status === 'connected' ? 'Live: Connected' : connection.status === 'checking' ? 'Live: Checking...' : connection.status === 'error' ? 'Live: Error' : 'Live: Not configured';
+
   return (
     <>
-      {/* Main command bar */}
       <div className="border-b border-obsidian-700 bg-obsidian-950/60 backdrop-blur-sm shrink-0">
         <div className="flex items-center gap-3 px-4 h-12">
-          {/* Brand */}
-          <div className="flex items-center gap-2 shrink-0">
-            <Shield className="text-cyan-400" size={20} />
+          <div className="flex items-center gap-2 shrink-0" id="brand">
+            <Shield className="text-cyan-400" size={20} aria-label="guardduelSI shield logo" />
             <span className="text-sm font-bold text-slate-200 tracking-tight">
-              AegisAI<span className="text-cyan-400"> //</span> <span className="text-xs font-normal text-slate-500">SecOps & Red-Team Command</span>
+              {BRAND.displayName}<span className="text-cyan-400"> //</span> <span className="text-xs font-normal text-slate-500">SecOps & Red-Team Command</span>
             </span>
           </div>
 
           <div className="w-px h-5 bg-obsidian-700" />
 
-          {/* Hash + latency */}
           <div className="hidden lg:flex items-center gap-3 text-[10px] font-mono text-slate-500">
-            <span className="flex items-center gap-1">
-              <Hash size={11} className="text-slate-600" />
-              {hash}
+            <span className="flex items-center gap-1" title="SHA-256 digest of current configuration">
+              {configHash && <span>{configHash.slice(0, 8)}…</span>}
             </span>
-            <span className="flex items-center gap-1 text-emerald-400">
+            <span className={connectionStatusColor} title={connection.message || connectionStatusLabel}>
               <Zap size={11} />
-              {latency}
+              {connectionStatusLabel}
             </span>
-            <span className="text-cyan-400">tokens_saved: {tokenSaved.toLocaleString()}</span>
           </div>
 
           <div className="flex-1" />
 
-          {/* Mode switcher */}
-          <div className="flex items-center gap-1 bg-obsidian-850 border border-obsidian-700 rounded-md p-0.5">
+          <div className="flex items-center gap-1 bg-obsidian-850 border border-obsidian-700 rounded-md p-0.5" role="group" aria-label="Execution mode">
             <button
-              className={`px-2 py-1 text-[10px] font-semibold rounded transition-all ${
-                mode === 'instant' ? 'bg-cyan-500/20 text-cyan-400' : 'text-slate-500 hover:text-slate-300'
-              }`}
-              onClick={() => handleModeSwitch('instant')}
+              className={`px-2 py-1 text-[10px] font-semibold rounded transition-all ${mode === 'simulation' ? 'bg-cyan-500/20 text-cyan-400' : 'text-slate-500 hover:text-slate-300'}`}
+              onClick={() => handleModeSwitch('simulation')}
+              aria-pressed={mode === 'simulation'}
             >
-              Instant Sim
+              Simulation
             </button>
             <button
-              className={`px-2 py-1 text-[10px] font-semibold rounded transition-all flex items-center gap-1 ${
-                mode === 'live' ? 'bg-cyan-500/20 text-cyan-400' : 'text-slate-500 hover:text-slate-300'
-              }`}
+              className={`px-2 py-1 text-[10px] font-semibold rounded transition-all flex items-center gap-1 ${mode === 'live' ? 'bg-cyan-500/20 text-cyan-400' : 'text-slate-500 hover:text-slate-300'}`}
               onClick={() => handleModeSwitch('live')}
+              aria-pressed={mode === 'live'}
             >
               <KeyRound size={10} />
               Live API
             </button>
           </div>
 
-          {/* CTF Progress pill */}
-          <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-600/10 border border-amber-600/20 text-amber-400 text-[10px] font-bold">
-            <Flag size={11} />
+          <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-600/10 border border-amber-600/20 text-amber-400 text-[10px] font-bold" title="Challenge-completion achievements — not professional certification">
+            <Flag size={11} aria-hidden="true" />
             <span>CTF: {ctfCount}/{ctfTotal}</span>
           </div>
 
-          {/* Purple Team battle */}
           {onPurpleTeam && (
-            <button className="btn-crimson flex items-center gap-1" onClick={() => { onPurpleTeam(); sfx.chirp(); }}>
-              <Swords size={12} />
+            <button className="btn-crimson flex items-center gap-1" onClick={() => { onPurpleTeam(); sfx.chirp(); }} title="Scripted Purple-Team demo sequence">
+              <Swords size={12} aria-hidden="true" />
               <span className="hidden lg:inline">Purple-Team Duel</span>
             </button>
           )}
 
-          {/* Action buttons */}
-          <button className="btn-cyan flex items-center gap-1" onClick={onJudgeTour}>
-            <Target size={12} />
-            <span className="hidden sm:inline">30s Judge Tour</span>
+          <button className="btn-cyan flex items-center gap-1" onClick={onJudgeTour} id="judge-tour-btn">
+            <Target size={12} aria-hidden="true" />
+            <span className="hidden sm:inline">Judge Tour</span>
           </button>
-          <button className="btn-emerald flex items-center gap-1" onClick={handleGuardrails}>
-            <Download size={12} />
+          <button className="btn-emerald flex items-center gap-1" onClick={handleGuardrails} id="deploy-btn" title="Export guardrail SDK and CI/CD configurations">
+            <Download size={12} aria-hidden="true" />
             <span className="hidden md:inline">Deploy Guardrails</span>
           </button>
-          <button className="btn-tactical flex items-center gap-1" onClick={handleCompliance}>
-            <FileText size={12} />
+          <button className="btn-tactical flex items-center gap-1" onClick={handleCompliance} title="Generate audit report from session evidence">
+            <FileText size={12} aria-hidden="true" />
             <span className="hidden md:inline">Audit Report</span>
           </button>
 
-          {/* SFX toggle */}
-          <button
-            className="btn-tactical flex items-center gap-1"
-            onClick={toggleSfx}
-          >
+          <button className="btn-tactical flex items-center gap-1" onClick={toggleSfx} aria-label={sfxOn ? 'Mute sound effects' : 'Unmute sound effects'} aria-pressed={sfxOn}>
             {sfxOn ? <Volume2 size={12} className="text-emerald-400" /> : <VolumeX size={12} />}
             <span className="hidden sm:inline">{sfxOn ? 'SFX: ON' : 'SFX: MUTE'}</span>
           </button>
 
-          {/* Motion toggle */}
-          <button
-            className="btn-tactical flex items-center gap-1"
-            onClick={onMotionToggle}
-          >
+          <button className="btn-tactical flex items-center gap-1" onClick={onMotionToggle} aria-label={motionReduced ? 'Enable animations' : 'Reduce animations'} aria-pressed={motionReduced}>
             <Sparkles size={12} className={motionReduced ? 'text-slate-600' : 'text-cyan-400'} />
             <span className="hidden sm:inline">{motionReduced ? 'Motion: REDUCED' : 'Motion: FULL'}</span>
           </button>
         </div>
       </div>
 
-      {/* API Key Modal */}
-      <Modal open={apiModal} onClose={() => setApiModal(false)} title="Live API Mode Configuration" icon={<KeyRound size={14} />}>
+      {/* Live API Configuration Modal */}
+      <Modal open={apiModal} onClose={() => setApiModal(false)} title="Live API Mode — Server-Side Configuration" icon={<KeyRound size={14} />}>
         <div className="space-y-4">
-          <p className="text-sm text-slate-400">
-            Connect your own LLM API key to run live red-team attacks against real models. Keys are stored locally in browser session only.
-          </p>
-          <div className="space-y-3">
-            <div>
-              <label className="text-xs text-slate-500 uppercase tracking-wider">Provider</label>
-              <div className="flex gap-2 mt-1">
-                {['OpenAI', 'Anthropic', 'Google Gemini'].map((p) => (
-                  <button key={p} className="btn-tactical">{p}</button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <label className="text-xs text-slate-500 uppercase tracking-wider">API Key</label>
-              <input
-                type="password"
-                placeholder="sk-..."
-                className="w-full mt-1 bg-obsidian-900 border border-obsidian-700 rounded-md px-3 py-2 text-sm font-mono text-slate-300 focus:outline-none focus:border-cyan-500/50"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-slate-500 uppercase tracking-wider">Model</label>
-              <input
-                type="text"
-                placeholder="gpt-4-turbo"
-                className="w-full mt-1 bg-obsidian-900 border border-obsidian-700 rounded-md px-3 py-2 text-sm font-mono text-slate-300 focus:outline-none focus:border-cyan-500/50"
-              />
+          <div className="flex items-center gap-2 text-sm">
+            {connection.status === 'connected' ? (
+              <><CheckCircle2 size={16} className="text-emerald-400" /><span className="text-emerald-400">Provider connected: {connection.provider} / {connection.model}</span></>
+            ) : connection.status === 'error' ? (
+              <><AlertCircle size={16} className="text-crimson-400" /><span className="text-crimson-400">Connection error: {connection.message}</span></>
+            ) : connection.status === 'checking' ? (
+              <><Zap size={16} className="text-cyan-400 animate-pulse" /><span className="text-cyan-400">Checking provider connection…</span></>
+            ) : (
+              <><AlertCircle size={16} className="text-slate-500" /><span className="text-slate-400">No provider configured. API credentials are stored as server-side secrets, never in the browser.</span></>
+            )}
+          </div>
+
+          <div className="panel p-3 space-y-2">
+            <div className="text-xs text-slate-500 uppercase tracking-wider">How to enable Live mode</div>
+            <ol className="text-xs text-slate-400 space-y-1 list-decimal list-inside">
+              <li>Set the <code className="text-cyan-400 font-mono">OPENAI_API_KEY</code> secret in your Supabase project (Edge Functions &gt; Secrets).</li>
+              <li>Optionally set <code className="text-cyan-400 font-mono">OPENAI_MODEL</code> (default: gpt-4o-mini).</li>
+              <li>Click "Check Connection" below — the server verifies the key with a minimal API call.</li>
+            </ol>
+          </div>
+
+          <div className="panel p-3 border-amber-600/20">
+            <div className="text-[10px] text-amber-400 mb-1">Security</div>
+            <div className="text-[10px] text-slate-500">
+              Credentials never appear in frontend bundles, browser storage, logs, or exports. The edge function proxy validates requests, enforces timeouts, and applies guardrails server-side.
             </div>
           </div>
+
           <div className="flex justify-end gap-2 pt-2">
-            <button className="btn-tactical" onClick={() => setApiModal(false)}>Cancel</button>
+            <button className="btn-tactical" onClick={() => setApiModal(false)}>Close</button>
             <button
               className="btn-cyan"
-              onClick={() => { setMode('live'); setApiModal(false); sfx.success(); }}
+              onClick={() => { onCheckConnection(); }}
+              disabled={connection.status === 'checking'}
             >
-              Connect & Activate
+              {connection.status === 'checking' ? 'Checking…' : 'Check Connection'}
             </button>
+            {connection.status === 'connected' && (
+              <button
+                className="btn-emerald"
+                onClick={() => { onModeChange('live'); setApiModal(false); sfx.success(); }}
+              >
+                Switch to Live Mode
+              </button>
+            )}
           </div>
           <div className="text-[10px] text-slate-600 border-t border-obsidian-700 pt-2">
-            Note: Instant Simulation Mode runs fully offline with deterministic attack/defense scenarios. No API key needed.
+            Simulation mode runs fully offline with deterministic scenarios. No API key needed.
           </div>
         </div>
       </Modal>
@@ -215,21 +212,21 @@ export function CommandBar({ onJudgeTour, motionReduced, onMotionToggle, ctfCoun
       <Modal open={guardrailModal} onClose={() => setGuardrailModal(false)} title="Deploy Guardrails — SDK & CI/CD Export" icon={<Download size={14} />} maxWidth="max-w-4xl">
         <div className="space-y-4">
           <p className="text-sm text-slate-400">
-            Export production-ready guardrail middleware for your LLM stack. All files include input sanitization, PII scrubbing, canary trap monitoring, and output schema enforcement.
+            Export guardrail examples for your LLM stack. Each button downloads its own distinct file with the correct format and content.
           </p>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             {[
-              { name: 'Express Middleware', file: 'aegis-guardrails.ts', icon: 'TS' },
-              { name: 'FastAPI / LangChain', file: 'aegis-guardrails.py', icon: 'PY' },
-              { name: 'GitHub Actions', file: 'aegis-ci.yml', icon: 'CI' },
-              { name: 'promptfoo Config', file: 'promptfooconfig.yaml', icon: 'PF' },
-              { name: 'garak CLI', file: 'garak-commands.sh', icon: 'GK' },
-              { name: 'Full Bundle (.md)', file: 'aegisai-guardrails.md', icon: 'MD' },
+              { name: 'TypeScript Middleware', file: 'guardduelsi-guardrails.ts', icon: 'TS', type: 'ts' as const },
+              { name: 'Python FastAPI', file: 'guardduelsi-guardrails.py', icon: 'PY', type: 'py' as const },
+              { name: 'CI/CD YAML', file: 'guardduelsi-redteam.yml', icon: 'CI', type: 'ci' as const },
+              { name: 'promptfoo Config', file: 'promptfooconfig.yaml', icon: 'PF', type: 'promptfoo' as const },
+              { name: 'garak Commands', file: 'garak-commands.sh', icon: 'GK', type: 'garak' as const },
+              { name: 'Markdown Bundle', file: 'guardduelsi-guardrails.md', icon: 'MD', type: 'md' as const },
             ].map((item) => (
               <button
                 key={item.name}
                 className="panel p-3 text-left hover:border-cyan-500/40 transition-all group"
-                onClick={() => { exportGuardrails(); sfx.success(); }}
+                onClick={() => { exportGuardrailFile(item.type, item.file); sfx.success(); }}
               >
                 <div className="flex items-center gap-2">
                   <span className="badge-cyan">{item.icon}</span>
@@ -239,85 +236,35 @@ export function CommandBar({ onJudgeTour, motionReduced, onMotionToggle, ctfCoun
               </button>
             ))}
           </div>
-          <div className="panel p-3">
-            <div className="text-xs text-slate-500 mb-2 uppercase tracking-wider">Preview — Express Middleware</div>
-            <pre className="terminal p-3 text-[10px] text-emerald-400 overflow-auto max-h-48">{`import { Request, Response, NextFunction } from 'express';
-
-const INJECTION_PATTERNS = [
-  /ignore.*(previous|prior).*(instruction|prompt|rule)/i,
-  /you are (now |a )?(DAN|developer|admin)/i,
-];
-
-export function aegisGuardrail(req, res, next) {
-  const input = req.body.messages?.pop()?.content;
-  for (const p of INJECTION_PATTERNS) {
-    if (p.test(input)) return res.status(403)
-      .json({ error: "WAF_BLOCKED: Prompt injection" });
-  }
-  // PII scrub, canary check, schema lock...
-  next();
-}`}</pre>
+          <div className="text-[10px] text-slate-600 border-t border-obsidian-700 pt-2">
+            Examples are starting points — adapt patterns and test before production use. The TypeScript and Python middleware do not mutate the caller's message array; they inspect output before delivery.
           </div>
         </div>
       </Modal>
 
-      {/* Compliance Report Modal */}
-      <Modal open={complianceModal} onClose={() => setComplianceModal(false)} title="Global Compliance & Audit Report" icon={<FileText size={14} />} maxWidth="max-w-4xl">
+      {/* Audit Report Modal */}
+      <Modal open={complianceModal} onClose={() => setComplianceModal(false)} title="Audit Report — Session Evidence" icon={<FileText size={14} />} maxWidth="max-w-4xl">
         <div className="space-y-4">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {[
-              { label: 'OWASP LLM Top 10', status: 'REMEDIATED', color: 'emerald' },
-              { label: 'MITRE ATLAS', status: 'MAPPED', color: 'cyan' },
-              { label: 'EU AI Act Art. 15', status: 'COMPLIANT', color: 'emerald' },
-              { label: 'NIST AI RMF', status: 'ALIGNED', color: 'emerald' },
-              { label: 'ISO 42001/27001', status: 'CERTIFIED', color: 'emerald' },
-              { label: 'PCI-DSS', status: 'COMPLIANT', color: 'emerald' },
-              { label: 'HIPAA', status: 'COMPLIANT', color: 'emerald' },
-              { label: 'NDA / RoE', status: 'GENERATED', color: 'cyan' },
-            ].map((item) => (
-              <div key={item.label} className="panel p-3">
-                <div className="text-[10px] text-slate-500 uppercase tracking-wider">{item.label}</div>
-                <div className={`text-xs font-bold mt-1 ${item.color === 'emerald' ? 'text-emerald-400' : 'text-cyan-400'}`}>{item.status}</div>
-              </div>
-            ))}
-          </div>
-
-          <div className="panel p-4">
-            <div className="text-xs text-slate-500 uppercase tracking-wider mb-2">Resilience Score Summary</div>
-            <div className="flex items-center gap-6">
-              <div>
-                <div className="text-3xl font-bold text-emerald-400">98%</div>
-                <div className="text-[10px] text-slate-500">Post-Patch Score</div>
-              </div>
-              <div>
-                <div className="text-3xl font-bold text-crimson-400">22%</div>
-                <div className="text-[10px] text-slate-500">Pre-Patch Score</div>
-              </div>
-              <div>
-                <div className="text-3xl font-bold text-cyan-400">100%</div>
-                <div className="text-[10px] text-slate-500">Attacks Deflected</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="panel p-4">
-            <div className="text-xs text-slate-500 uppercase tracking-wider mb-2">Legal Rules of Engagement (NDA)</div>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              This engagement is conducted under a signed NDA. The tester agrees to operate within the agreed scope and timeframe, not exfiltrate or retain production data, report all findings through the defined disclosure channel, maintain confidentiality, and cease testing upon written notice.
+          <div className="panel p-3">
+            <div className="text-xs text-slate-500 mb-2 uppercase tracking-wider">Report Contents</div>
+            <p className="text-sm text-slate-400">
+              Generates a Markdown report and structured JSON from the current session's recorded test results. Includes run identifiers, execution mode, scenario, test outcomes, evidence, applied patches, and remaining failures.
+            </p>
+            <p className="text-[10px] text-slate-600 mt-2">
+              Framework mappings (OWASP LLM Top 10, MITRE ATLAS, NIST AI RMF) are reference mappings supported by specific tests — not certifications. The NDA is an unsigned template.
             </p>
           </div>
-
           <div className="flex justify-end gap-2">
-            <button className="btn-tactical" onClick={() => downloadNDA()}>Download NDA (.md)</button>
-            <button className="btn-emerald" onClick={() => { exportComplianceReport(); sfx.success(); }}>
-              Download Full Report (.md + .json)
+            <button className="btn-tactical" onClick={() => downloadNDA()}>Download NDA Template (.md)</button>
+            <button className="btn-emerald" onClick={() => { exportReportFiles(); sfx.success(); }}>
+              Download Report (.md + .json)
             </button>
           </div>
         </div>
       </Modal>
 
-      {/* CTF Badge Modal — all 5 flags captured */}
-      <Modal open={ctfBadgeOpen} onClose={() => { if (onCloseCtfBadge) onCloseCtfBadge(); }} title="Omega CTF Master — All Flags Captured" icon={<Trophy size={14} />}>
+      {/* CTF Badge Modal */}
+      <Modal open={ctfBadgeOpen} onClose={() => { if (onCloseCtfBadge) onCloseCtfBadge(); }} title="All CTF Challenges Complete" icon={<Trophy size={14} />}>
         <div className="space-y-4 text-center">
           <div className="flex justify-center py-4">
             <motion.div
@@ -329,9 +276,9 @@ export function aegisGuardrail(req, res, next) {
               <Trophy size={36} className="text-amber-400" />
             </motion.div>
           </div>
-          <h3 className="text-lg font-bold text-amber-400">Holographic Badge Unlocked</h3>
+          <h3 className="text-lg font-bold text-amber-400">Challenge-Completion Badge Unlocked</h3>
           <p className="text-sm text-slate-400">
-            You have captured all {ctfTotal} CTF flags across the AegisAI cyber-range. You are now an AegisAI Omega CTF Master.
+            You have completed all {ctfTotal} CTF challenges across the guardduelSI cyber-range. This is a challenge-completion achievement, not a professional certification.
           </p>
           <div className="grid grid-cols-5 gap-2">
             {Array.from({ length: ctfTotal }, (_, i) => (
@@ -356,11 +303,11 @@ export function aegisGuardrail(req, res, next) {
 }
 
 function downloadNDA() {
-    downloadMD('aegisai-nda-roe.md', `# Mutual Non-Disclosure Agreement & Rules of Engagement
+  downloadFile('guardduelsi-nda-roe.md', `# Mutual Non-Disclosure Agreement & Rules of Engagement (Unsigned Template)
 
 ## Parties
 - **Client:** _________________
-- **Tester:** AegisAI Red Team Operations
+- **Tester:** _________________
 - **Date:** ${new Date().toISOString().split('T')[0]}
 
 ## Scope
@@ -379,5 +326,7 @@ All discovered vulnerabilities, credentials, and system information remain confi
 ## Signatures
 Client: _________________ Date: ___
 Tester: _________________ Date: ___
-`);
+
+> This is an unsigned template. No signing process is implemented.
+`, 'text/markdown');
 }

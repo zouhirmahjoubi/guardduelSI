@@ -70,7 +70,7 @@ export function VaultWorkspace({ notes, onAddNote, onDeleteNote }: {
       <div className="flex-1 panel flex flex-col overflow-hidden min-w-0">
         <div className="panel-header">
           <BookOpen size={12} className="text-cyan-400" />
-          SpyderCEHub Knowledge Vault
+          guardduelSI Knowledge Vault
         </div>
         <div className="p-3 border-b border-obsidian-700 space-y-2 shrink-0">
           <div className="flex items-center gap-2">

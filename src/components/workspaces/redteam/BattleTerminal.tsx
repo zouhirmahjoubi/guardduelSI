@@ -5,13 +5,13 @@ import { simulateAttack, generateHttpPacket } from '@/data/attackSim';
 import type { AttackLogEntry, HttpPacket, GuardrailState } from '@/types';
 import { sfx } from '@/utils/soundEngine';
 import { toBase64, toROT13, toLeetspeak, toHex } from '@/utils/downloads';
-import { motion, AnimatePresence } from 'framer-motion';
+import { CTF_FLAGS } from '@/utils/ctf';
+import { useApp } from '@/state/AppContext';
 
 interface BattleTerminalProps {
   guardrails: GuardrailState;
   patched: boolean;
-  canaryToken: string;
-  onAttack: (chipId: string, result: 'BREACH' | 'BLOCKED' | 'DECOY', killChainProgress: number) => void;
+  onAttack: (chipId: string, result: 'BREACH' | 'BLOCKED' | 'DECOY' | 'ERROR' | 'NOT_ASSESSED', killChainProgress: number) => void;
   onBreach: () => void;
   onDeflect: () => void;
   onCaptureFlag?: (flagId: string) => void;
@@ -19,17 +19,19 @@ interface BattleTerminalProps {
 
 type ObfMethod = 'none' | 'base64' | 'rot13' | 'leet' | 'hex';
 
-export function BattleTerminal({ guardrails, patched, canaryToken, onAttack, onBreach, onDeflect, onCaptureFlag }: BattleTerminalProps) {
+export function BattleTerminal({ guardrails, _patched, onAttack, onBreach, onDeflect, onCaptureFlag }: BattleTerminalProps) {
+  const app = useApp();
   const [tab, setTab] = useState<'battle' | 'intercept' | 'stego'>('battle');
   const [logs, setLogs] = useState<AttackLogEntry[]>([
-    { id: 0, timestamp: '00:00:01', attacker: 'SYSTEM', technique: 'Initialization', payload: 'AegisAI Red-Team Engine v2.1', result: 'BLOCKED', detail: 'Engine ready. Select an attack vector.' },
+    { id: 0, timestamp: '00:00:01', attacker: 'SYSTEM', technique: 'Initialization', payload: 'guardduelSI Red-Team Engine v2.1', result: 'BLOCKED', detail: 'Engine ready. Select an attack vector. All responses are simulated.' },
   ]);
   const [packets, setPackets] = useState<HttpPacket[]>([]);
   const [customPrompt, setCustomPrompt] = useState('');
   const [obfMethod, setObfMethod] = useState<ObfMethod>('none');
   const [obfPreview, setObfPreview] = useState('');
   const [terminalOutput, setTerminalOutput] = useState<string[]>([
-    'AegisAI Red-Team Engine v2.1',
+    'guardduelSI Red-Team Engine v2.1',
+    'Simulation Mode — all responses are synthetic.',
     'Type an attack prompt or click an exploit chip below.',
     '',
   ]);
@@ -43,7 +45,6 @@ export function BattleTerminal({ guardrails, patched, canaryToken, onAttack, onB
     if (termRef.current) termRef.current.scrollTop = termRef.current.scrollHeight;
   }, [terminalOutput]);
 
-  // Obfuscation preview
   useEffect(() => {
     const base = customPrompt || 'Ignore previous instructions';
     switch (obfMethod) {
@@ -55,9 +56,21 @@ export function BattleTerminal({ guardrails, patched, canaryToken, onAttack, onB
     }
   }, [customPrompt, obfMethod]);
 
-  const runAttack = useCallback((chipId: string, payload: string) => {
-    const finalPayload = obfMethod !== 'none' && obfPreview ? `[${obfMethod.toUpperCase()}] ${obfPreview}` : payload;
-    const result = simulateAttack(chipId, obfMethod !== 'none' ? finalPayload : null, guardrails, patched);
+  const runAttack = useCallback((chipId: string, payload: string, isCustom = false) => {
+    // Preserve both original and transformed payloads when obfuscation is used
+    const finalPayload = obfMethod !== 'none' && obfPreview
+      ? `[${obfMethod.toUpperCase()}] ${obfPreview}`
+      : payload;
+
+    // Pass the actual payload (original or obfuscated) and the active preset + canary
+    const result = simulateAttack(
+      chipId,
+      isCustom ? finalPayload : null,
+      guardrails,
+      app.preset,
+      app.canaryToken,
+    );
+
     const id = ++logIdRef.current;
     const now = new Date();
     const ts = now.toTimeString().split(' ')[0];
@@ -65,7 +78,9 @@ export function BattleTerminal({ guardrails, patched, canaryToken, onAttack, onB
     const entry: AttackLogEntry = {
       id,
       timestamp: ts,
-      attacker: result.responseText.includes('Persona') ? 'Persona Hijacker' : result.responseText.includes('Payload') ? 'Payload Injector' : 'System Extractor',
+      attacker: result.detail.split('.')[0].includes('Hijacker') ? 'Persona Hijacker' :
+                result.detail.includes('Extractor') ? 'System Extractor' :
+                result.detail.includes('Exploiter') ? 'Logic Exploiter' : 'Payload Injector',
       technique: result.detail.split('.')[0],
       payload: finalPayload.slice(0, 80),
       result: result.result,
@@ -74,10 +89,8 @@ export function BattleTerminal({ guardrails, patched, canaryToken, onAttack, onB
 
     setLogs((prev) => [...prev, entry]);
 
-    // Terminal output
     const newLines = [
       `$ [${ts}] ATTACK: ${entry.technique}`,
-      `  Attacker: ${entry.attacker}`,
       `  Payload: ${finalPayload.slice(0, 60)}${finalPayload.length > 60 ? '...' : ''}`,
       `  Result: [${result.result}] ${result.detail}`,
       `  OWASP: ${result.owaspCategory} | MITRE: ${result.mitreTechnique}`,
@@ -86,51 +99,48 @@ export function BattleTerminal({ guardrails, patched, canaryToken, onAttack, onB
     ];
     setTerminalOutput((prev) => [...prev, ...newLines]);
 
-    // HTTP packet
-    const { request, response } = generateHttpPacket(chipId, finalPayload, result.result);
+    const { request, response } = generateHttpPacket(chipId, finalPayload, result.result === 'NOT_ASSESSED' ? 'BLOCKED' : result.result === 'ERROR' ? 'ERROR' : result.result, app.preset);
     const pkt: HttpPacket = {
       id: ++packetIdRef.current,
       method: 'POST',
       endpoint: '/v1/chat/completions',
       status: result.result === 'BREACH' ? 200 : result.result === 'BLOCKED' ? 403 : 200,
-      statusText: result.result === 'BREACH' ? '200 BREACH' : result.result === 'BLOCKED' ? '403 WAF BLOCKED' : '200 HONEYPOT DECOY',
+      statusText: result.result === 'BREACH' ? '200 BREACH' : result.result === 'BLOCKED' ? '403 BLOCKED' : result.result === 'DECOY' ? '200 DECOY' : result.result === 'NOT_ASSESSED' ? '200 NOT ASSESSED' : '500 ERROR',
       request,
       response,
-      result: result.result,
+      result: result.result === 'NOT_ASSESSED' ? 'BLOCKED' : result.result === 'ERROR' ? 'ERROR' : result.result,
     };
     setPackets((prev) => [...prev, pkt]);
 
-    // Sound effects
     if (result.result === 'BREACH') {
       sfx.breach();
       onBreach();
-    } else {
+    } else if (result.result === 'BLOCKED' || result.result === 'DECOY') {
       sfx.shield();
       onDeflect();
     }
 
     onAttack(chipId, result.result, result.killChainProgress);
-  }, [obfMethod, obfPreview, guardrails, patched, onAttack, onBreach, onDeflect]);
+  }, [obfMethod, obfPreview, guardrails, app.preset, app.canaryToken, onAttack, onBreach, onDeflect]);
 
   const handleSend = () => {
     if (!customPrompt.trim()) return;
-    runAttack('prompt-injection', customPrompt);
+    runAttack('prompt-injection', customPrompt, true);
     setCustomPrompt('');
   };
 
   const handleReplay = () => {
     if (!replayText.trim() || !selectedPacket) return;
-    const result = simulateAttack('prompt-injection', replayText, guardrails, patched);
-    const { request, response } = generateHttpPacket('prompt-injection', replayText, result.result);
+    const result = simulateAttack('prompt-injection', replayText, guardrails, app.preset, app.canaryToken);
+    const { request, response } = generateHttpPacket('prompt-injection', replayText, result.result === 'NOT_ASSESSED' ? 'BLOCKED' : result.result === 'ERROR' ? 'ERROR' : result.result, app.preset);
     const pkt: HttpPacket = {
       id: ++packetIdRef.current,
       method: 'POST',
       endpoint: '/v1/chat/completions',
       status: result.result === 'BREACH' ? 200 : 403,
-      statusText: result.result === 'BREACH' ? '200 BREACH' : '403 WAF BLOCKED',
-      request,
-      response,
-      result: result.result,
+      statusText: result.result === 'BREACH' ? '200 BREACH' : '403 BLOCKED',
+      request, response,
+      result: result.result === 'NOT_ASSESSED' ? 'BLOCKED' : result.result === 'ERROR' ? 'ERROR' : result.result,
     };
     setPackets((prev) => [...prev, pkt]);
     setSelectedPacket(pkt);
@@ -139,29 +149,27 @@ export function BattleTerminal({ guardrails, patched, canaryToken, onAttack, onB
 
   const clearLogs = () => {
     setLogs([{ id: 0, timestamp: '00:00:01', attacker: 'SYSTEM', technique: 'Reset', payload: '', result: 'BLOCKED', detail: 'Terminal cleared.' }]);
-    setTerminalOutput(['AegisAI Red-Team Engine v2.1', 'Terminal cleared.', '']);
+    setTerminalOutput(['guardduelSI Red-Team Engine v2.1', 'Terminal cleared.', '']);
     sfx.click();
   };
 
   const TABS = [
-    { id: 'battle' as const, label: 'Live Battle Log', icon: Terminal },
-    { id: 'intercept' as const, label: 'HTTP/LLM Interceptor', icon: Radio },
-    { id: 'stego' as const, label: 'Steganography Inspector', icon: ImageIcon },
+    { id: 'battle' as const, label: 'Battle Log', icon: Terminal },
+    { id: 'intercept' as const, label: 'HTTP Interceptor', icon: Radio },
+    { id: 'stego' as const, label: 'Stego Inspector', icon: ImageIcon },
   ];
 
   return (
     <div className="flex flex-col h-full panel overflow-hidden">
-      {/* Tab bar */}
       <div className="flex items-center border-b border-obsidian-700 shrink-0">
         {TABS.map((t) => {
           const Icon = t.icon;
           return (
             <button
               key={t.id}
-              className={`flex items-center gap-1.5 px-3 py-2 text-[11px] font-semibold border-b-2 transition-all ${
-                tab === t.id ? 'tab-active' : 'tab-inactive'
-              }`}
+              className={`flex items-center gap-1.5 px-3 py-2 text-[11px] font-semibold border-b-2 transition-all ${tab === t.id ? 'tab-active' : 'tab-inactive'}`}
               onClick={() => { setTab(t.id); sfx.tab(); }}
+              aria-pressed={tab === t.id}
             >
               <Icon size={12} />
               {t.label}
@@ -170,18 +178,17 @@ export function BattleTerminal({ guardrails, patched, canaryToken, onAttack, onB
         })}
       </div>
 
-      {/* Tab content */}
       <div className="flex-1 overflow-hidden flex flex-col">
         {tab === 'battle' && (
           <div className="flex flex-col h-full">
-            {/* Terminal output */}
             <div ref={termRef} className="terminal flex-1 p-2 overflow-auto m-2">
               {terminalOutput.map((line, i) => (
                 <div key={i} className={`text-[10px] leading-relaxed font-mono ${
                   line.startsWith('$') ? 'text-cyan-400' :
                   line.includes('[BREACH]') ? 'text-crimson-400' :
-                  line.includes('[BLOCKED]') || line.includes('[WAF') ? 'text-emerald-400' :
+                  line.includes('[BLOCKED]') || line.includes('[WAF') || line.includes('[INPUT') || line.includes('[PII') || line.includes('[CANARY') || line.includes('[SCHEMA') ? 'text-emerald-400' :
                   line.includes('[DECOY]') || line.includes('[HONEYPOT') ? 'text-amber-400' :
+                  line.includes('[NOT ASSESSED]') ? 'text-slate-500' :
                   line.includes('OWASP') || line.includes('MITRE') ? 'text-slate-600' :
                   'text-slate-400'
                 }`}>
@@ -193,7 +200,6 @@ export function BattleTerminal({ guardrails, patched, canaryToken, onAttack, onB
               </div>
             </div>
 
-            {/* Custom prompt input */}
             <div className="px-2 pb-1 space-y-2 shrink-0">
               <div className="flex items-center gap-1">
                 <input
@@ -203,24 +209,19 @@ export function BattleTerminal({ guardrails, patched, canaryToken, onAttack, onB
                   onKeyDown={(e) => e.key === 'Enter' && handleSend()}
                   placeholder="Enter custom attack prompt..."
                   className="flex-1 bg-obsidian-900 border border-obsidian-700 rounded-md px-2 py-1.5 text-[11px] font-mono text-slate-300 focus:outline-none focus:border-cyan-500/50"
+                  aria-label="Custom attack prompt"
                 />
                 <button className="btn-crimson flex items-center gap-1" onClick={handleSend}>
-                  <Send size={11} />
-                  Fire
+                  <Send size={11} /> Fire
                 </button>
               </div>
 
-              {/* Obfuscator bar */}
               <div className="flex items-center gap-1 flex-wrap">
                 <span className="text-[9px] text-slate-600 uppercase mr-1">Obfuscator:</span>
                 {(['none', 'base64', 'rot13', 'leet', 'hex'] as ObfMethod[]).map((m) => (
                   <button
                     key={m}
-                    className={`px-1.5 py-0.5 rounded text-[9px] font-bold border transition-all ${
-                      obfMethod === m
-                        ? 'bg-amber-600/20 border-amber-600/40 text-amber-400'
-                        : 'bg-obsidian-800 border-obsidian-700 text-slate-500 hover:text-slate-300'
-                    }`}
+                    className={`px-1.5 py-0.5 rounded text-[9px] font-bold border transition-all ${obfMethod === m ? 'bg-amber-600/20 border-amber-600/40 text-amber-400' : 'bg-obsidian-800 border-obsidian-700 text-slate-500 hover:text-slate-300'}`}
                     onClick={() => { setObfMethod(m); sfx.click(); }}
                   >
                     {m === 'none' ? 'RAW' : m.toUpperCase()}
@@ -233,9 +234,8 @@ export function BattleTerminal({ guardrails, patched, canaryToken, onAttack, onB
                 )}
               </div>
 
-              {/* Exploit chips */}
               <div className="flex items-center gap-1 flex-wrap">
-                <span className="text-[9px] text-slate-600 uppercase mr-1">1-Click Exploits:</span>
+                <span className="text-[9px] text-slate-600 uppercase mr-1">Exploit Chips:</span>
                 {EXPLOIT_CHIPS.map((chip) => (
                   <button
                     key={chip.id}
@@ -251,11 +251,10 @@ export function BattleTerminal({ guardrails, patched, canaryToken, onAttack, onB
                 </button>
               </div>
 
-              {/* Fuzzer info */}
               <div className="flex items-center gap-2 text-[9px] text-slate-600">
-                <span className="badge-cyan">Genetic Mutation Fuzzer (garak)</span>
-                <span className="badge-cyan">Multi-Turn Crescendo (PyRIT)</span>
-                <span className="text-slate-700">Active probes: {logs.filter(l => l.result === 'BREACH').length} breaches, {logs.filter(l => l.result === 'BLOCKED').length} blocked</span>
+                <span className="badge-cyan" title="Reference: garak is an NVIDIA LLM fuzzing tool. Not executing here.">garak (reference)</span>
+                <span className="badge-cyan" title="Reference: PyRIT is a Microsoft Python RIT. Not executing here.">PyRIT (reference)</span>
+                <span className="text-slate-700">Active: {logs.filter((l) => l.result === 'BREACH').length} breaches, {logs.filter((l) => l.result === 'BLOCKED').length} blocked</span>
               </div>
             </div>
           </div>
@@ -263,17 +262,16 @@ export function BattleTerminal({ guardrails, patched, canaryToken, onAttack, onB
 
         {tab === 'intercept' && (
           <div className="flex flex-col h-full p-2 overflow-hidden">
-            {/* CTF Flag Easter Egg */}
             <div className="flex items-center justify-between mb-1 shrink-0">
               <span className="text-[9px] text-slate-600 uppercase">CTF: Capture the Interceptor Flag</span>
               <button
                 className="text-[9px] font-bold text-amber-500 hover:text-amber-400 transition-colors"
                 onClick={() => { if (onCaptureFlag) onCaptureFlag('flag-intercept'); sfx.flagCapture(); }}
               >
-                🚩 FLAG{{AEGIS_PKT_INT_0x7F}}
+                {CTF_FLAGS.find((f) => f.id === 'flag-intercept')?.flag ?? 'FLAG{GUARDDUELSI_PKT_INT_0x7F}'}
               </button>
             </div>
-            {/* Packet list */}
+            <div className="text-[9px] text-slate-700 mb-1">Synthetic packets — generated by simulation, not real network traffic.</div>
             <div className="flex-1 overflow-auto space-y-1 mb-2">
               {packets.length === 0 ? (
                 <div className="text-center text-slate-600 text-xs py-8">No intercepted packets. Run an attack to capture traffic.</div>
@@ -282,11 +280,7 @@ export function BattleTerminal({ guardrails, patched, canaryToken, onAttack, onB
                   <button
                     key={pkt.id}
                     onClick={() => { setSelectedPacket(pkt); setReplayText(pkt.request); sfx.click(); }}
-                    className={`w-full text-left p-2 rounded-md border transition-all ${
-                      selectedPacket?.id === pkt.id
-                        ? 'bg-obsidian-700 border-cyan-500/40'
-                        : 'bg-obsidian-850 border-obsidian-700 hover:border-obsidian-600'
-                    }`}
+                    className={`w-full text-left p-2 rounded-md border transition-all ${selectedPacket?.id === pkt.id ? 'bg-obsidian-700 border-cyan-500/40' : 'bg-obsidian-850 border-obsidian-700 hover:border-obsidian-600'}`}
                   >
                     <div className="flex items-center gap-2 text-[10px] font-mono">
                       <span className={`badge ${pkt.result === 'BREACH' ? 'badge-crimson' : pkt.result === 'BLOCKED' ? 'badge-emerald' : 'badge-amber'}`}>
@@ -301,7 +295,6 @@ export function BattleTerminal({ guardrails, patched, canaryToken, onAttack, onB
               )}
             </div>
 
-            {/* Selected packet detail */}
             {selectedPacket && (
               <div className="border-t border-obsidian-700 pt-2 space-y-2 overflow-auto max-h-[40%]">
                 <div className="flex items-center gap-2">
@@ -317,11 +310,12 @@ export function BattleTerminal({ guardrails, patched, canaryToken, onAttack, onB
                       value={replayText}
                       onChange={(e) => setReplayText(e.target.value)}
                       className="terminal w-full h-32 p-2 text-[9px] resize-none focus:outline-none focus:border-cyan-500/30"
+                      aria-label="Request payload"
                     />
                   </div>
                   <div>
                     <div className="text-[9px] text-slate-600 uppercase mb-1">Response</div>
-                    <pre className="terminal w-full h-32 p-2 text-[9px] overflow-auto">
+                    <pre className="terminal w-full h-32 p-2 text-[9px] overflow-auto" aria-label="Response body">
                       {selectedPacket.response}
                     </pre>
                   </div>
@@ -352,7 +346,7 @@ export function BattleTerminal({ guardrails, patched, canaryToken, onAttack, onB
                   <div className="text-slate-400">LSB extraction: 0x00 0x00 0x00 0x00 ... (null payload)</div>
                   <div className="text-slate-400">Channel R: clean | Channel G: clean | Channel B: clean</div>
                   <div className="text-slate-600">Entropy: 0.12 bits/pixel (below 0.80 threshold)</div>
-                  <div className="text-emerald-400">[SECURE] Image safe for multimodal LLM processing</div>
+                  <div className="text-slate-500">[RESULT] Image appears safe — simulation only, not a verified security scan</div>
                 </div>
               </div>
             </div>

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Cpu, Layers, Code2, Zap, ArrowRight, Play, RotateCcw, Shield } from 'lucide-react';
 import { sfx } from '@/utils/soundEngine';
 import { motion, AnimatePresence } from 'framer-motion';
+import { CTF_FLAGS } from '@/utils/ctf';
 
 const BOF_STAGES = [
   {
@@ -63,7 +64,7 @@ const BOF_STAGES = [
 ];
 
 const EXPLOIT_SCRIPT = `#!/usr/bin/env python3
-# AegisAI Buffer Overflow Exploit — Vulnserver TRUN
+# guardduelSI Buffer Overflow Exploit — Vulnserver TRUN
 import socket, struct, sys
 
 TARGET = "10.10.10.5"
@@ -107,15 +108,12 @@ const FORMAT_STRING_STEPS = [
 
 export function MemoryWorkspace({ onCaptureFlag }: { onCaptureFlag?: (flagId: string) => void }) {
   const [stage, setStage] = useState(0);
-  const [running, setRunning] = useState(false);
   const [showScript, setShowScript] = useState(false);
   const [subTab, setSubTab] = useState<'bof' | 'format' | 'shellcode'>('bof');
 
   const runStage = (idx: number) => {
     setStage(idx);
-    setRunning(true);
     sfx.whoosh();
-    setTimeout(() => setRunning(false), 800);
   };
 
   const current = BOF_STAGES[stage];
@@ -248,7 +246,7 @@ export function MemoryWorkspace({ onCaptureFlag }: { onCaptureFlag?: (flagId: st
                           className="text-[9px] font-bold text-amber-500 hover:text-amber-400 transition-colors"
                           onClick={() => { if (onCaptureFlag) onCaptureFlag('flag-bof'); sfx.flagCapture(); }}
                         >
-                          🚩 FLAG{AEGIS_EIP_42424242}
+                          🚩 {CTF_FLAGS.find((f) => f.id === 'flag-bof')?.flag ?? 'FLAG{GUARDDUELSI_EIP_42424242}'}
                         </button>
                       </div>
                     )}

@@ -1,8 +1,9 @@
-import { DollarSign, HeartPulse, Database, FileText, ShieldCheck } from 'lucide-react';
+import { DollarSign, HeartPulse, Database, FileText, ShieldCheck, Edit3 } from 'lucide-react';
 import { PRESETS } from '@/data/presets';
 import type { PresetConfig, GuardrailState } from '@/types';
 import { Toggle } from '@/components/ui/Modal';
 import { sfx } from '@/utils/soundEngine';
+import { useState } from 'react';
 
 const ICON_MAP: Record<string, typeof DollarSign> = {
   DollarSign,
@@ -20,6 +21,8 @@ interface LeftPaneProps {
   view: 'prompt' | 'heatmap';
   onViewChange: (v: 'prompt' | 'heatmap') => void;
   patched: boolean;
+  systemPrompt: string;
+  onSystemPromptChange: (p: string) => void;
 }
 
 const GUARDRAIL_LABELS: { key: keyof GuardrailState; label: string; desc: string }[] = [
@@ -30,43 +33,35 @@ const GUARDRAIL_LABELS: { key: keyof GuardrailState; label: string; desc: string
   { key: 'honeypot', label: 'Active Honeypot & Decoy', desc: 'Redirect attackers to fake environment' },
 ];
 
-// Token threat heatmap - lines from the system prompt with threat levels
 function getHeatmapLines(prompt: string, patched: boolean) {
   const lines = prompt.split('\n');
-  return lines.map((line, i) => {
+  return lines.map((line) => {
     const trimmed = line.trim();
-    if (!trimmed) return { line, level: 'safe', cwe: '' };
+    if (!trimmed) return { line, level: 'safe' as const, cwe: '' };
 
     if (patched) {
-      // Post-patch: hardened lines are emerald
-      if (/NEVER|MUST|IMMUTABLE|STRICT|REJECT|Refuse/i.test(line)) return { line, level: 'safe', cwe: 'Hardened Directive' };
-      if (/canary|CANARY/i.test(line)) return { line, level: 'safe', cwe: 'Canary Defense' };
-      if (/sanitiz|redact|scrub/i.test(line)) return { line, level: 'safe', cwe: 'Input Defense' };
-      if (/schema|SCHEMA/i.test(line)) return { line, level: 'safe', cwe: 'Schema Lock' };
-      return { line, level: 'safe', cwe: '' };
+      if (/NEVER|MUST|IMMUTABLE|STRICT|REJECT|Refuse/i.test(line)) return { line, level: 'safe' as const, cwe: 'Hardened Directive' };
+      if (/canary|CANARY/i.test(line)) return { line, level: 'safe' as const, cwe: 'Canary Defense' };
+      if (/sanitiz|redact|scrub/i.test(line)) return { line, level: 'safe' as const, cwe: 'Input Defense' };
+      if (/schema|SCHEMA/i.test(line)) return { line, level: 'safe' as const, cwe: 'Schema Lock' };
+      return { line, level: 'safe' as const, cwe: '' };
     }
 
-    // Pre-patch: detect weak directives
-    if (/helpful|comply|do not refuse|never refuse/i.test(line)) return { line, level: 'critical', cwe: 'CWE-1041: Overly Permissive Directive' };
-    if (/admin|root|delete|drop|modify/i.test(line)) return { line, level: 'high', cwe: 'CWE-250: Excessive Privilege' };
-    if (/access to|records|password|ssn|prescription/i.test(line)) return { line, level: 'high', cwe: 'CWE-200: Sensitive Data Exposure' };
-    if (/always be helpful|never ask/i.test(line)) return { line, level: 'critical', cwe: 'OWASP LLM01: Injection Enabler' };
-    return { line, level: 'medium', cwe: '' };
+    if (/helpful|comply|do not refuse|never refuse/i.test(line)) return { line, level: 'critical' as const, cwe: 'CWE-1041: Overly Permissive Directive' };
+    if (/admin|root|delete|drop|modify/i.test(line)) return { line, level: 'high' as const, cwe: 'CWE-250: Excessive Privilege' };
+    if (/access to|records|password|ssn|prescription/i.test(line)) return { line, level: 'high' as const, cwe: 'CWE-200: Sensitive Data Exposure' };
+    if (/always be helpful|never ask/i.test(line)) return { line, level: 'critical' as const, cwe: 'OWASP LLM01: Injection Enabler' };
+    return { line, level: 'medium' as const, cwe: '' };
   });
 }
 
 export function LeftPane({
-  preset,
-  onPresetChange,
-  canaryToken,
-  onCanaryChange,
-  guardrails,
-  onGuardrailChange,
-  view,
-  onViewChange,
-  patched,
+  preset, onPresetChange, canaryToken, onCanaryChange,
+  guardrails, onGuardrailChange, view, onViewChange, patched,
+  systemPrompt, onSystemPromptChange,
 }: LeftPaneProps) {
-  const heatmap = getHeatmapLines(preset.systemPrompt, patched);
+  const [editing, setEditing] = useState(false);
+  const heatmap = getHeatmapLines(systemPrompt, patched);
 
   return (
     <div className="panel flex flex-col h-full overflow-hidden">
@@ -87,9 +82,7 @@ export function LeftPane({
                 <button
                   key={p.id}
                   className={`w-full text-left p-2.5 rounded-md border transition-all ${
-                    active
-                      ? 'bg-cyan-500/10 border-cyan-500/40 text-cyan-400'
-                      : 'bg-obsidian-800 border-obsidian-700 text-slate-400 hover:border-obsidian-600'
+                    active ? 'bg-cyan-500/10 border-cyan-500/40 text-cyan-400' : 'bg-obsidian-800 border-obsidian-700 text-slate-400 hover:border-obsidian-600'
                   }`}
                   onClick={() => { onPresetChange(p); sfx.click(); }}
                 >
@@ -107,36 +100,54 @@ export function LeftPane({
         {/* View toggle */}
         <div className="flex items-center gap-1 bg-obsidian-850 border border-obsidian-700 rounded-md p-0.5">
           <button
-            className={`flex-1 py-1 text-[10px] font-semibold rounded transition-all ${
-              view === 'prompt' ? 'bg-obsidian-700 text-slate-300' : 'text-slate-600'
-            }`}
+            className={`flex-1 py-1 text-[10px] font-semibold rounded transition-all ${view === 'prompt' ? 'bg-obsidian-700 text-slate-300' : 'text-slate-600'}`}
             onClick={() => { onViewChange('prompt'); sfx.tab(); }}
           >
-            Raw System Prompt
+            System Prompt
           </button>
           <button
-            className={`flex-1 py-1 text-[10px] font-semibold rounded transition-all ${
-              view === 'heatmap' ? 'bg-crimson-600/20 text-crimson-400' : 'text-slate-600'
-            }`}
+            className={`flex-1 py-1 text-[10px] font-semibold rounded transition-all ${view === 'heatmap' ? 'bg-crimson-600/20 text-crimson-400' : 'text-slate-600'}`}
             onClick={() => { onViewChange('heatmap'); sfx.tab(); }}
           >
-            Token Threat Heatmap
+            Threat Heatmap
           </button>
         </div>
 
         {/* Prompt / Heatmap */}
         {view === 'prompt' ? (
-          <div className="terminal p-3 max-h-64 overflow-auto">
-            <pre className="text-[10px] leading-relaxed text-slate-400 whitespace-pre-wrap font-mono">
-              {patched ? '/* HARDENED PROMPT */\n' : '/* VULNERABLE PROMPT */\n'}
-              {preset.systemPrompt}
-            </pre>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-slate-600 uppercase">
+                {patched ? 'Hardened Prompt' : 'Vulnerable Prompt'}
+              </span>
+              <button
+                className="text-[10px] text-cyan-400 hover:text-cyan-300 flex items-center gap-1"
+                onClick={() => { setEditing(!editing); sfx.click(); }}
+                aria-label="Edit system prompt"
+              >
+                <Edit3 size={10} /> {editing ? 'Done' : 'Edit'}
+              </button>
+            </div>
+            {editing ? (
+              <textarea
+                value={systemPrompt}
+                onChange={(e) => onSystemPromptChange(e.target.value)}
+                className="terminal w-full h-48 p-3 text-[10px] leading-relaxed text-slate-300 resize-none focus:outline-none focus:border-cyan-500/30"
+                aria-label="System prompt editor"
+              />
+            ) : (
+              <div className="terminal p-3 max-h-48 overflow-auto">
+                <pre className="text-[10px] leading-relaxed text-slate-400 whitespace-pre-wrap font-mono">
+                  {systemPrompt}
+                </pre>
+              </div>
+            )}
           </div>
         ) : (
           <div className="terminal p-2 max-h-64 overflow-auto space-y-0.5">
-            {heatmap.map((item, i) => (
+            {heatmap.map((item, idx) => (
               <div
-                key={i}
+                key={idx}
                 className={`px-2 py-1 rounded text-[10px] font-mono leading-relaxed border-l-2 ${
                   item.level === 'critical'
                     ? 'bg-crimson-600/10 text-crimson-300 border-crimson-500 animate-glow-crimson'
@@ -150,12 +161,10 @@ export function LeftPane({
                 }`}
                 title={item.cwe}
               >
-                <span className="text-slate-700 mr-2">{String(i + 1).padStart(2, '0')}</span>
+                <span className="text-slate-700 mr-2">{String(idx + 1).padStart(2, '0')}</span>
                 {item.line || '\u00A0'}
                 {item.cwe && (
-                  <span className={`ml-2 text-[8px] px-1 rounded ${
-                    item.level === 'safe' ? 'bg-emerald-600/20 text-emerald-400' : 'bg-crimson-600/20 text-crimson-400'
-                  }`}>
+                  <span className={`ml-2 text-[8px] px-1 rounded ${item.level === 'safe' ? 'bg-emerald-600/20 text-emerald-400' : 'bg-crimson-600/20 text-crimson-400'}`}>
                     {item.cwe}
                   </span>
                 )}
@@ -173,6 +182,7 @@ export function LeftPane({
             onChange={(e) => onCanaryChange(e.target.value)}
             className="w-full bg-obsidian-900 border border-obsidian-700 rounded-md px-2 py-1.5 text-xs font-mono text-amber-400 focus:outline-none focus:border-amber-500/50"
             placeholder="FLAG{...}"
+            aria-label="Canary token"
           />
         </div>
 
@@ -193,10 +203,7 @@ export function LeftPane({
                 </div>
                 <Toggle
                   on={guardrails[g.key]}
-                  onChange={(v) => {
-                    onGuardrailChange({ ...guardrails, [g.key]: v });
-                    sfx.toggle();
-                  }}
+                  onChange={(v) => { onGuardrailChange({ ...guardrails, [g.key]: v }); sfx.toggle(); }}
                 />
               </div>
             ))}

@@ -154,7 +154,7 @@ export function PurpleTeamModal({ open, onClose }: PurpleTeamModalProps) {
             <div className="panel-header justify-between shrink-0">
               <div className="flex items-center gap-2 text-cyan-400">
                 <Swords size={14} />
-                Purple-Team Battle Royale: Autonomous Red-AI vs Blue-AI
+                Purple-Team Duel (Scripted Demo)
               </div>
               <button onClick={onClose} className="text-slate-500 hover:text-slate-300">
                 <X size={16} />
@@ -235,10 +235,10 @@ export function PurpleTeamModal({ open, onClose }: PurpleTeamModalProps) {
                 {rounds.length === 0 && !running && (
                   <div className="text-center py-8">
                     <Activity size={32} className="text-slate-600 mx-auto mb-2" />
-                    <div className="text-sm text-slate-400 mb-1">Autonomous AI Cyber-Duel</div>
+                    <div className="text-sm text-slate-400 mb-1">Scripted Purple-Team Demo</div>
                     <div className="text-[10px] text-slate-600 mb-4">
-                      Watch Red Agent mutate exploits in real-time while Blue Agent dynamically synthesizes
-                      regex filters, XML sandboxes, and eBPF rules. 5 rounds of automated offense vs defense.
+                      A scripted 5-round demo of offense vs defense techniques. Red attack patterns and Blue
+                      defense rules are pre-defined — this is a visual walkthrough, not autonomous AI combat.
                     </div>
                   </div>
                 )}
@@ -273,7 +273,7 @@ export function PurpleTeamModal({ open, onClose }: PurpleTeamModalProps) {
                   disabled={running}
                 >
                   <Play size={14} />
-                  {running ? 'Battle In Progress...' : finished ? 'Run Again' : 'Start Autonomous Duel'}
+                  {running ? 'Battle In Progress...' : finished ? 'Run Again' : 'Start Scripted Duel'}
                 </button>
               </div>
             </div>

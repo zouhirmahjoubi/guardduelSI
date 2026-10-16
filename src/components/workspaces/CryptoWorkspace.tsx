@@ -28,7 +28,7 @@ export function CryptoWorkspace({ onCaptureFlag }: { onCaptureFlag?: (flagId: st
   const [subTab, setSubTab] = useState<'workbench' | 'quantum' | 'markov'>('workbench');
   const [aesRound, setAesRound] = useState(0);
   const [rsaKeySize, setRsaKeySize] = useState(4096);
-  const [hashInput, setHashInput] = useState('Hello, AegisAI!');
+  const [hashInput, setHashInput] = useState('Hello, guardduelSI!');
   const [bb84Step, setBb84Step] = useState(0);
   const [eavesdrop, setEavesdrop] = useState(false);
 
@@ -325,7 +325,7 @@ export function CryptoWorkspace({ onCaptureFlag }: { onCaptureFlag?: (flagId: st
                       className="text-[9px] font-bold text-amber-500 hover:text-amber-400 transition-colors"
                       onClick={() => { if (onCaptureFlag) onCaptureFlag('flag-quantum'); sfx.flagCapture(); }}
                     >
-                      {'🚩 FLAG{AEGIS_BB84_QKD}'}
+                      {CTF_FLAGS.find((f) => f.id === 'flag-quantum')?.flag ?? 'FLAG{GUARDDUELSI_QKD_BB84}'}
                     </button>
                   </div>
                 )}
