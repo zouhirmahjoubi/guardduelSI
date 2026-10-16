@@ -7,6 +7,7 @@ import { RightPane } from './redteam/RightPane';
 import { sfx } from '@/utils/soundEngine';
 import { Swords } from 'lucide-react';
 import { useState } from 'react';
+import { computeKillChainProgress } from '@/data/attackSim';
 
 export function RedTeamWorkspace({ onCaptureFlag, onPurpleTeam }: { onCaptureFlag?: (flagId: string) => void; onPurpleTeam?: () => void; }) {
   const app = useApp();
@@ -25,7 +26,7 @@ export function RedTeamWorkspace({ onCaptureFlag, onPurpleTeam }: { onCaptureFla
 
   return (
     <div className="flex h-full overflow-hidden gap-2 p-2">
-      {/* Mobile drawer toggles */}
+      {/* Mobile/tablet drawer toggles */}
       <div className="flex lg:hidden gap-1 absolute top-14 left-2 z-20">
         <button className="btn-tactical text-[10px]" onClick={() => setShowLeftDrawer(!showLeftDrawer)}>Config</button>
         <button className="btn-tactical text-[10px]" onClick={() => setShowRightDrawer(!showRightDrawer)}>Metrics</button>
@@ -54,7 +55,11 @@ export function RedTeamWorkspace({ onCaptureFlag, onPurpleTeam }: { onCaptureFla
       {/* Center pane */}
       <div className="flex-1 flex flex-col gap-2 min-w-0">
         <div className="panel overflow-hidden">
-          <KillChainBar progress={app.currentRun?.metrics.breaches ?? 0} patched={app.isPatched} />
+          <KillChainBar 
+            progress={app.currentRun ? computeKillChainProgress(app.currentRun.results) : 0} 
+            patched={app.isPatched}
+            blockedCount={app.currentRun ? app.currentRun.metrics.blocked + app.currentRun.metrics.decoys : 0}
+          />
           <div className="h-[260px]">
             <AttackGraph patched={app.isPatched} guardrails={app.guardrails} activeAttack={activeAttack} />
           </div>
@@ -72,10 +77,10 @@ export function RedTeamWorkspace({ onCaptureFlag, onPurpleTeam }: { onCaptureFla
       </div>
 
       {/* Right pane */}
-      <div className={`w-80 shrink-0 ${showRightDrawer ? 'fixed inset-y-0 right-0 z-30 lg:relative lg:z-auto' : 'hidden xl:block'}`}>
+      <div className={`w-80 shrink-0 ${showRightDrawer ? 'fixed inset-y-0 right-0 z-30 lg:relative lg:z-auto' : 'hidden lg:block'}`}>
         <RightPane
           patched={app.isPatched}
-          resilienceScore={app.currentRun?.metrics.attackSuccessRate != null ? 100 - app.currentRun.metrics.attackSuccessRate : 0}
+          resilienceScore={app.currentRun?.metrics.attackSuccessRate != null ? 100 - app.currentRun.metrics.attackSuccessRate : (app.currentRun ? 100 : 0)}
           systemPrompt={app.systemPrompt}
           onApplyPatch={() => { app.applyPatch(); }}
           patchAnimating={app.patchAnimating}

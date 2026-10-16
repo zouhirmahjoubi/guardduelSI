@@ -8,6 +8,7 @@ import { usePersistentState } from '@/utils/storage';
 import { useApp } from '@/state/AppContext';
 import { BRAND, WORKSPACE_COUNT } from '@/data/brand';
 import type { WorkspaceId } from '@/types';
+import type { ExportConfig } from '@/utils/exports';
 import { sfx } from '@/utils/soundEngine';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Shield } from 'lucide-react';
@@ -173,6 +174,13 @@ function AppContent() {
         onModeChange={app.setMode}
         connection={app.connection}
         onCheckConnection={app.checkConnection}
+        exportConfig={{
+          preset: app.preset,
+          systemPrompt: app.systemPrompt,
+          canaryToken: app.canaryToken,
+          guardrails: app.guardrails,
+        } as ExportConfig}
+        currentRun={app.currentRun}
       />
       <WorkspaceNav active={workspace} onSelect={setWorkspace} />
 

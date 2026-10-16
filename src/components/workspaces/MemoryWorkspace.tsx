@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Cpu, Layers, Code2, Zap, ArrowRight, Play, RotateCcw, Shield } from 'lucide-react';
 import { sfx } from '@/utils/soundEngine';
+import { downloadFile } from '@/utils/downloads';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CTF_FLAGS } from '@/utils/ctf';
 
@@ -171,7 +172,7 @@ export function MemoryWorkspace({ onCaptureFlag }: { onCaptureFlag?: (flagId: st
                     <div className="text-[9px] text-slate-600 mt-1 pl-7">{s.desc}</div>
                   </button>
                 ))}
-                <button className="btn-cyan w-full mt-2 flex items-center justify-center gap-1" onClick={() => { runStage(0); sfx.click(); }}>
+                <button className="btn-cyan w-full mt-2 flex items-center justify-center gap-1" onClick={() => { runStage(0); setShowScript(false); sfx.click(); }}>
                   <RotateCcw size={11} /> Reset
                 </button>
               </div>
@@ -266,7 +267,7 @@ export function MemoryWorkspace({ onCaptureFlag }: { onCaptureFlag?: (flagId: st
                   {showScript ? EXPLOIT_SCRIPT : '# Run all 7 stages to generate exploit script...\n# Click "Execute Exploit" after stage 7.'}
                 </div>
                 {showScript && (
-                  <button className="btn-emerald w-full mt-2" onClick={() => { sfx.success(); }}>
+                  <button className="btn-emerald w-full mt-2" onClick={() => { downloadFile('exploit.py', EXPLOIT_SCRIPT, 'text/x-python'); sfx.success(); }}>
                     Download exploit.py
                   </button>
                 )}

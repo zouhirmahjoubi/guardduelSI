@@ -8,7 +8,8 @@
     "build": "tsc && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.app.json"
+    "typecheck": "tsc --noEmit -p tsconfig.app.json",
+    "test": "npx tsx src/tests/simulation.test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",

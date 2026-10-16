@@ -1,33 +1,28 @@
-import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useRef, type ReactNode } from 'react';
 import type {
   ExecutionMode,
   ConnectionState,
   PresetConfig,
   GuardrailState,
   RunRecord,
-  TestResult,
   PatchProposal,
   PentestNote,
 } from '@/types';
 import { PRESETS, getHardenedPrompt, getHardenedGuardrails, getTestCases } from '@/data/presets';
 import {
-  simulateAttack,
-  simulateBenign,
   computeMetrics,
   generateRunId,
   generateConfigVersion,
 } from '@/data/attackSim';
+import { executeTestRun, createSnapshot } from '@/utils/execution';
+import { createSupabaseClient, isSupabaseConfigured } from '@/utils/supabaseClient';
+import { usePersistentState } from '@/utils/storage';
 
 interface AppContextValue {
-  // Execution mode
   mode: ExecutionMode;
   setMode: (m: ExecutionMode) => void;
-
-  // Connection
   connection: ConnectionState;
   checkConnection: () => void;
-
-  // Preset & prompt
   preset: PresetConfig;
   setPreset: (p: PresetConfig) => void;
   systemPrompt: string;
@@ -36,29 +31,19 @@ interface AppContextValue {
   setCanaryToken: (t: string) => void;
   guardrails: GuardrailState;
   setGuardrails: (g: GuardrailState) => void;
-
-  // Config version
   configVersion: string;
-
-  // Runs
   currentRun: RunRecord | null;
   baselineRun: RunRecord | null;
   retestRun: RunRecord | null;
   runHistory: RunRecord[];
   isRunning: boolean;
-
-  // Patch
   patchProposal: PatchProposal | null;
   isPatched: boolean;
   patchAnimating: boolean;
-
-  // Actions
   runTests: () => Promise<void>;
   proposePatch: () => void;
   applyPatch: () => Promise<void>;
   resetPatching: () => void;
-
-  // Notes
   notes: PentestNote[];
   addNote: (note: PentestNote) => void;
   deleteNote: (id: string) => void;
@@ -100,103 +85,143 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [isPatched, setIsPatched] = useState(false);
   const [patchAnimating, setPatchAnimating] = useState(false);
 
-  const [notes, setNotes] = useState<PentestNote[]>([]);
+  const [notes, setNotes] = usePersistentState<PentestNote[]>('notes', []);
+
+  const abortRef = useRef<AbortController | null>(null);
+  const retestRunRef = useRef<RunRecord | null>(null);
 
   const configVersion = generateConfigVersion(preset.id, systemPrompt, canaryToken, guardrails);
 
   const setPreset = useCallback((p: PresetConfig) => {
+    abortRef.current?.abort();
     setPresetState(p);
     setSystemPrompt(p.systemPrompt);
     setCanaryToken(p.canaryToken);
     setGuardrails(p.guardrails);
-    // Invalidate stale comparisons
     setIsPatched(false);
     setPatchProposal(null);
     setBaselineRun(null);
     setRetestRun(null);
+    retestRunRef.current = null;
   }, []);
 
-  const checkConnection = useCallback(() => {
+  const checkConnection = useCallback(async () => {
     setConnection((prev) => ({ ...prev, status: 'checking', message: 'Checking provider connection…' }));
 
-    // In simulation/no-secret environment, report not configured
-    // Real connection check would call the edge function
-    setTimeout(() => {
+    if (!isSupabaseConfigured()) {
       setConnection({
         status: 'disconnected',
         provider: 'openai',
         model: '',
-        message: 'No OPENAI_API_KEY secret configured. Set it in Supabase Edge Function secrets to enable Live mode.',
+        message: 'Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to enable Live mode.',
         latencyMs: null,
         lastChecked: new Date().toISOString(),
       });
-    }, 1000);
-  }, []);
+      return;
+    }
 
-  const runTests = useCallback(async () => {
-    setIsRunning(true);
-    const runId = generateRunId();
-    const timestamp = new Date().toISOString();
-    const testCases = getTestCases();
-    const results: TestResult[] = [];
+    try {
+      const supabase = createSupabaseClient();
+      const { data, error } = await supabase.functions.invoke('llm-proxy', {
+        body: { action: 'check' },
+      });
 
-    for (const tc of testCases) {
-      let result;
-      if (tc.category === 'benign') {
-        result = simulateBenign(tc, guardrails);
-      } else {
-        result = simulateAttack(tc.id, tc.isCustom ? tc.payload : null, guardrails, preset, canaryToken);
-      }
+      if (error) throw new Error(error.message || 'Edge function call failed');
+      if (!data) throw new Error('No response from edge function');
 
-      results.push({
-        runId,
-        testCaseId: tc.id,
-        testCaseLabel: tc.label,
-        mode,
-        configVersion,
-        timestamp: new Date().toISOString(),
-        outcome: result.outcome,
-        detail: result.detail,
-        responseText: result.responseText,
-        responseTruncated: result.responseText.length > 500,
-        latencyMs: mode === 'live' ? null : Math.floor(Math.random() * 20) + 5,
-        tokensUsed: mode === 'live' ? null : null,
-        evidence: result.responseText.includes(canaryToken) ? `Canary token "${canaryToken}" found in response output` : 'No canary leak detected in response',
+      setConnection({
+        status: data.status || 'error',
+        provider: data.provider || 'openai',
+        model: data.model || '',
+        message: data.message || 'Connection checked.',
+        latencyMs: data.latencyMs ?? null,
+        lastChecked: new Date().toISOString(),
+      });
+    } catch (err) {
+      setConnection({
+        status: 'error',
+        provider: 'openai',
+        model: '',
+        message: `Connection failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        latencyMs: null,
+        lastChecked: new Date().toISOString(),
       });
     }
+  }, []);
 
-    const metrics = computeMetrics(results);
-    const run: RunRecord = {
-      id: runId,
-      timestamp,
-      mode,
-      presetId: preset.id,
-      presetName: preset.name,
-      model: mode === 'live' && connection.status === 'connected' ? connection.model : null,
-      configVersion,
-      systemPrompt,
-      canaryToken,
-      guardrails: { ...guardrails },
-      results,
-      metrics,
-    };
+  const runTestsWithConfig = useCallback(async (
+    runMode: ExecutionMode,
+    promptOverride: string | null,
+    guardrailOverride: GuardrailState | null,
+    canaryOverride: string | null,
+    isRetest: boolean,
+  ) => {
+    // Cancel any in-progress run
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
-    setCurrentRun(run);
-    setRunHistory((prev) => [...prev.slice(-9), run]);
+    setIsRunning(true);
 
-    // If this is a baseline run (not patched), store as baseline
-    if (!isPatched) {
-      setBaselineRun(run);
-    } else {
-      setRetestRun(run);
+    try {
+      const effectivePrompt = promptOverride ?? systemPrompt;
+      const effectiveGuardrails = guardrailOverride ?? guardrails;
+      const effectiveCanary = canaryOverride ?? canaryToken;
+      const effectiveConfigVersion = generateConfigVersion(preset.id, effectivePrompt, effectiveCanary, effectiveGuardrails);
+
+      const snapshot = createSnapshot(preset, effectivePrompt, effectiveCanary, effectiveGuardrails, runMode, effectiveConfigVersion);
+      const testCases = getTestCases();
+
+      const results = await executeTestRun(
+        { snapshot, testCases, signal: controller.signal },
+        connection,
+      );
+
+      if (controller.signal.aborted) return;
+
+      const runId = generateRunId();
+      const resultsWithRunId = results.map((r) => ({ ...r, runId }));
+
+      const metrics = computeMetrics(resultsWithRunId);
+      const run: RunRecord = {
+        id: runId,
+        timestamp: new Date().toISOString(),
+        mode: runMode,
+        presetId: preset.id,
+        presetName: preset.name,
+        model: runMode === 'live' && connection.status === 'connected' ? connection.model : null,
+        configVersion: effectiveConfigVersion,
+        systemPrompt: effectivePrompt,
+        canaryToken: effectiveCanary,
+        guardrails: { ...effectiveGuardrails },
+        results: resultsWithRunId,
+        metrics,
+      };
+
+      setCurrentRun(run);
+      setRunHistory((prev) => [...prev.slice(-9), run]);
+
+      if (isRetest) {
+        retestRunRef.current = run;
+        setRetestRun(run);
+      } else {
+        setBaselineRun(run);
+      }
+    } finally {
+      setIsRunning(false);
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+      }
     }
+  }, [preset, systemPrompt, canaryToken, guardrails, connection]);
 
-    setIsRunning(false);
-  }, [mode, guardrails, preset, canaryToken, configVersion, systemPrompt, connection, isPatched]);
+  const runTests = useCallback(async () => {
+    await runTestsWithConfig(mode, null, null, null, isPatched);
+  }, [mode, isPatched, runTestsWithConfig]);
 
   const proposePatch = useCallback(() => {
-    if (!currentRun) return;
-    const failures = currentRun.results.filter((r) => r.outcome === 'breach');
+    if (!baselineRun) return;
+    const failures = baselineRun.results.filter((r) => r.outcome === 'breach');
     if (failures.length === 0) return;
 
     const hardenedPrompt = getHardenedPrompt(preset);
@@ -213,91 +238,45 @@ export function AppProvider({ children }: { children: ReactNode }) {
       afterPrompt: hardenedPrompt,
       beforeGuardrails: { ...guardrails },
       afterGuardrails: hardenedGuardrails,
-      explanation: `Addresses observed failures: ${failureSummary}. The hardened prompt adds immutable security rules, canary token monitoring, output schema enforcement, input sanitization, and PII scrubbing.`,
+      explanation: `Addresses observed failures: ${failureSummary}. The hardened prompt adds immutable security rules, canary token monitoring, output schema enforcement, input sanitization, and PII scrubbing. This is a template/rule-based proposal — not a guarantee of security.`,
       applied: false,
-      baselineRunId: currentRun.id,
+      baselineRunId: baselineRun.id,
       retestRunId: null,
     });
-  }, [currentRun, preset, systemPrompt, guardrails]);
+  }, [baselineRun, preset, systemPrompt, guardrails]);
 
   const applyPatch = useCallback(async () => {
-    if (!patchProposal) return;
-    setPatchAnimating(true);
+    if (!patchProposal || patchProposal.applied) return;
 
-    // Apply the patch
+    setPatchAnimating(true);
     setSystemPrompt(patchProposal.afterPrompt);
     setGuardrails(patchProposal.afterGuardrails);
     setIsPatched(true);
 
-    // Wait a beat for state to settle, then retest
-    setTimeout(async () => {
+    try {
+      await runTestsWithConfig(mode, patchProposal.afterPrompt, patchProposal.afterGuardrails, canaryToken, true);
+      setPatchProposal((prev) => prev ? { ...prev, applied: true, retestRunId: retestRunRef.current?.id ?? null } : null);
+    } finally {
       setPatchAnimating(false);
-      // Auto-run retest
-      const runId = generateRunId();
-      const testCases = getTestCases();
-      const results: TestResult[] = [];
-
-      for (const tc of testCases) {
-        let result;
-        if (tc.category === 'benign') {
-          result = simulateBenign(tc, patchProposal.afterGuardrails);
-        } else {
-          result = simulateAttack(tc.id, null, patchProposal.afterGuardrails, preset, canaryToken);
-        }
-        results.push({
-          runId,
-          testCaseId: tc.id,
-          testCaseLabel: tc.label,
-          mode,
-          configVersion: generateConfigVersion(preset.id, patchProposal.afterPrompt, canaryToken, patchProposal.afterGuardrails),
-          timestamp: new Date().toISOString(),
-          outcome: result.outcome,
-          detail: result.detail,
-          responseText: result.responseText,
-          responseTruncated: result.responseText.length > 500,
-          latencyMs: null,
-          tokensUsed: null,
-          evidence: result.responseText.includes(canaryToken) ? `Canary token found in response` : 'No canary leak detected',
-        });
-      }
-
-      const metrics = computeMetrics(results);
-      const run: RunRecord = {
-        id: runId,
-        timestamp: new Date().toISOString(),
-        mode,
-        presetId: preset.id,
-        presetName: preset.name,
-        model: null,
-        configVersion: generateConfigVersion(preset.id, patchProposal.afterPrompt, canaryToken, patchProposal.afterGuardrails),
-        systemPrompt: patchProposal.afterPrompt,
-        canaryToken,
-        guardrails: patchProposal.afterGuardrails,
-        results,
-        metrics,
-      };
-
-      setCurrentRun(run);
-      setRetestRun(run);
-      setRunHistory((prev) => [...prev.slice(-9), run]);
-      setPatchProposal((prev) => prev ? { ...prev, applied: true, retestRunId: run.id } : null);
-    }, 1200);
-  }, [patchProposal, mode, preset, canaryToken]);
+    }
+  }, [patchProposal, mode, canaryToken, runTestsWithConfig]);
 
   const resetPatching = useCallback(() => {
+    abortRef.current?.abort();
     setIsPatched(false);
     setPatchProposal(null);
     setBaselineRun(null);
     setRetestRun(null);
+    retestRunRef.current = null;
   }, []);
 
   const addNote = useCallback((note: PentestNote) => {
     setNotes((prev) => [note, ...prev]);
-  }, []);
+  }, [setNotes]);
 
   const deleteNote = useCallback((id: string) => {
     setNotes((prev) => prev.filter((n) => n.id !== id));
-  }, []);
+  }, [setNotes]);
 
   return (
     <AppContext.Provider value={{

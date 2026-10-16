@@ -1,8 +1,16 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Atom, Lock, Key, Hash, Zap, Activity, Binary, Shield, TrendingUp } from 'lucide-react';
 import { sfx } from '@/utils/soundEngine';
 import { motion } from 'framer-motion';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { CTF_FLAGS } from '@/utils/ctf';
+
+const SALT_HEX = '8F2A3C91D7E4B6025A8F1C3D9E7B4F02';
+const PEPPER = 'guardduelsI-server-pepper-2024';
+
+// Deterministic photon bases for BB84 — fixed so visualization is stable across renders
+const BB84_BASES = ['↕', '↔', '↗', '↘', '↕', '↔', '↗', '↘', '↕', '↔', '↗', '↘', '↕', '↔', '↗', '↘'];
+const BB84_DISTURBED = [false, true, false, true, true, false, true, false, true, true, false, true, false, true, false, true];
 
 const AES_STATE = [
   [0x54, 0x4f, 0x4e, 0x20],
@@ -29,17 +37,27 @@ export function CryptoWorkspace({ onCaptureFlag }: { onCaptureFlag?: (flagId: st
   const [aesRound, setAesRound] = useState(0);
   const [rsaKeySize, setRsaKeySize] = useState(4096);
   const [hashInput, setHashInput] = useState('Hello, guardduelSI!');
+  const [hashHex, setHashHex] = useState('Computing SHA-512...');
   const [bb84Step, setBb84Step] = useState(0);
   const [eavesdrop, setEavesdrop] = useState(false);
 
   const aesRounds = ['SubBytes (S-Box)', 'ShiftRows', 'MixColumns', 'AddRoundKey'];
   const currentRound = aesRounds[aesRound % 4];
 
-  // Simple hash simulation
-  const hashHex = Array.from(hashInput).reduce((acc, c) => {
-    const h = ((c.charCodeAt(0) * 31 + 17) & 0xff).toString(16).padStart(2, '0');
-    return acc + h;
-  }, '').repeat(4).slice(0, 128);
+  // Real SHA-512 via Web Crypto API
+  useEffect(() => {
+    let cancelled = false;
+    const input = hashInput || '';
+    const data = PEPPER + SALT_HEX + input;
+    crypto.subtle.digest('SHA-512', new TextEncoder().encode(data)).then((buf) => {
+      if (cancelled) return;
+      const hex = Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+      setHashHex(hex);
+    }).catch(() => {
+      if (!cancelled) setHashHex('SHA-512 unavailable');
+    });
+    return () => { cancelled = true; };
+  }, [hashInput]);
 
   const bb84Steps = [
     { step: 'Alice sends photons', desc: 'Alice randomly encodes bits using rectilinear (↕↔) or diagonal (↗↘) polarization bases.' },
@@ -253,7 +271,7 @@ export function CryptoWorkspace({ onCaptureFlag }: { onCaptureFlag?: (flagId: st
               </div>
               <div className="p-3 space-y-3">
                 <div className="text-[10px] text-slate-500">
-                  BB84 uses quantum photon polarization to detect eavesdropping. Any measurement by Eve disturbs the quantum states.
+                  BB84 uses quantum photon polarization to detect eavesdropping. Any measurement by Eve disturbs the quantum states. <span className="text-slate-700">(Simulated visualization)</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -277,8 +295,7 @@ export function CryptoWorkspace({ onCaptureFlag }: { onCaptureFlag?: (flagId: st
                 <div className="terminal p-3">
                   <div className="grid grid-cols-8 gap-1">
                     {Array.from({ length: 16 }, (_, i) => {
-                      const base = i % 2 === 0 ? '↕↔' : '↗↘';
-                      const isEveDisturbed = eavesdrop && Math.random() > 0.5;
+                      const isEveDisturbed = eavesdrop && BB84_DISTURBED[i];
                       return (
                         <motion.div
                           key={i}
@@ -291,7 +308,7 @@ export function CryptoWorkspace({ onCaptureFlag }: { onCaptureFlag?: (flagId: st
                           animate={bb84Step > 0 ? { opacity: [0.4, 1, 0.4] } : { opacity: 0.3 }}
                           transition={{ duration: 1.5, repeat: Infinity, delay: i * 0.05 }}
                         >
-                          {base[Math.floor(Math.random() * 2)]}
+                          {BB84_BASES[i]}
                         </motion.div>
                       );
                     })}
@@ -379,7 +396,7 @@ export function CryptoWorkspace({ onCaptureFlag }: { onCaptureFlag?: (flagId: st
                   The Fluhrer, Mantin, and Shamir (FMS) attack exploits weak RC4 Initialization Vectors in WEP, recovering the key from ~50,000 captured packets.
                 </div>
                 <div className="terminal p-3 text-[10px] font-mono space-y-1">
-                  <div className="text-slate-600 uppercase text-[9px] border-b border-obsidian-700 pb-1">FMS Attack Progress</div>
+                  <div className="text-slate-600 uppercase text-[9px] border-b border-obsidian-700 pb-1">FMS Attack Progress <span className="text-slate-700">(simulated)</span></div>
                   <div className="text-cyan-400">Captured packets: 47,328 / ~50,000</div>
                   <div className="text-amber-400">Weak IVs found: 12,847 (3, 255, N pattern)</div>
                   <div className="text-slate-400">Key bytes recovered: 12/13 (92%)</div>

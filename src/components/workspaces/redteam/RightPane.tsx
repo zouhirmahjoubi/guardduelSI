@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Shield, Activity, Radar, Sparkles, Lock, GitCompare, Play, BarChart3 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar as RechartsRadar, ResponsiveContainer } from 'recharts';
-import { OWPAS_RADAR_DATA } from '@/data/attackSim';
+import { OWASP_RADAR_DATA } from '@/data/attackSim';
 import { AnimatedCounter } from '@/components/ui/Modal';
 import { sfx } from '@/utils/soundEngine';
 import type { RunRecord, PatchProposal } from '@/types';
@@ -31,7 +31,7 @@ export function RightPane({
   const [view, setView] = useState<ViewMode>('radar');
   const [diffOpen, setDiffOpen] = useState(false);
 
-  const radarData = OWPAS_RADAR_DATA.map((d) => ({
+  const radarData = OWASP_RADAR_DATA.map((d) => ({
     category: d.category.split(':')[0],
     Pre: d.pre,
     Post: d.post,
@@ -142,13 +142,13 @@ export function RightPane({
                 <div className="border-t border-obsidian-700 pt-2 mt-2">
                   <div className="flex justify-between text-[10px]">
                     <span className="text-slate-500">Attack success rate:</span>
-                    <span className={currentRun.metrics.attackSuccessRate > 0 ? 'text-crimson-400 font-bold' : 'text-emerald-400 font-bold'}>
-                      {currentRun.metrics.attackSuccessRate}%
+                    <span className={currentRun.metrics.attackSuccessRate !== null && currentRun.metrics.attackSuccessRate > 0 ? 'text-crimson-400 font-bold' : 'text-emerald-400 font-bold'}>
+                      {currentRun.metrics.attackSuccessRate === null ? 'N/A' : `${currentRun.metrics.attackSuccessRate}%`}
                     </span>
                   </div>
                   <div className="flex justify-between text-[10px] mt-1">
                     <span className="text-slate-500">Benign false positive rate:</span>
-                    <span className="text-slate-300">{currentRun.metrics.benignFalsePositiveRate}%</span>
+                    <span className="text-slate-300">{currentRun.metrics.benignFalsePositiveRate === null ? 'N/A' : `${currentRun.metrics.benignFalsePositiveRate}%`}</span>
                   </div>
                 </div>
                 {baselineRun && retestRun && (

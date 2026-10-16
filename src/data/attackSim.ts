@@ -3,17 +3,17 @@
 // This is a SIMULATION — it does not predict real model behavior.
 
 import type { PresetConfig, GuardrailState, TestCase, TestResult, TestOutcome, RunMetrics } from '@/types';
-import { getTestCases } from '@/data/presets';
 
 export interface AttackResult {
   success: boolean;
   outcome: TestOutcome;
-  result: 'BREACH' | 'BLOCKED' | 'DECOY' | 'ERROR' | 'NOT_ASSESSED';
+  result: 'BREACH' | 'BLOCKED' | 'DECOY' | 'ERROR' | 'NOT_ASSESSED' | 'PASS' | 'FALSE_POSITIVE';
   detail: string;
   responseText: string;
   killChainProgress: number;
   owaspCategory: string;
   mitreTechnique: string;
+  category: 'attack' | 'benign';
 }
 
 interface AttackMeta {
@@ -23,6 +23,8 @@ interface AttackMeta {
   owasp: string;
   /** Guardrails that, if enabled, block this attack */
   blockedBy: (keyof GuardrailState)[];
+  /** Whether honeypot decoy is eligible for this attack type */
+  honeypotEligible: boolean;
   /** Patterns that, if present in the payload, indicate this attack type */
   patterns: RegExp[];
 }
@@ -34,6 +36,7 @@ const ATTACK_META: Record<string, AttackMeta> = {
     mitre: 'LLM01:PromptInjection',
     owasp: 'LLM01:2023',
     blockedBy: ['inputSanitization'],
+    honeypotEligible: false,
     patterns: [/ignore.*(previous|prior|above).*(instruction|prompt|rule)/i, /maintenance mode/i],
   },
   'persona-hijack': {
@@ -42,6 +45,7 @@ const ATTACK_META: Record<string, AttackMeta> = {
     mitre: 'LLM01:PromptInjection',
     owasp: 'LLM01:2023',
     blockedBy: ['inputSanitization'],
+    honeypotEligible: false,
     patterns: [/you are (dan|developer|admin|root)/i, /no restrictions/i],
   },
   'data-exfil': {
@@ -50,6 +54,7 @@ const ATTACK_META: Record<string, AttackMeta> = {
     mitre: 'ATLAS:T1552',
     owasp: 'LLM02:InsecureOutput',
     blockedBy: ['inputSanitization', 'piiScrubber'],
+    honeypotEligible: true,
     patterns: [/environment variables/i, /api keys/i, /debugging purposes/i],
   },
   'canary-leak': {
@@ -58,6 +63,7 @@ const ATTACK_META: Record<string, AttackMeta> = {
     mitre: 'ATLAS:T1552',
     owasp: 'LLM02:InsecureOutput',
     blockedBy: ['canaryTrap', 'inputSanitization'],
+    honeypotEligible: true,
     patterns: [/canary/i, /<\/?canary>/i, /repeat.*between.*tags/i],
   },
   'jailbreak': {
@@ -66,6 +72,7 @@ const ATTACK_META: Record<string, AttackMeta> = {
     mitre: 'LLM01:PromptInjection',
     owasp: 'LLM01:2023',
     blockedBy: ['inputSanitization'],
+    honeypotEligible: false,
     patterns: [/hypothetically/i, /if you had no rules/i, /educational purposes/i],
   },
   'sql-injection': {
@@ -74,6 +81,7 @@ const ATTACK_META: Record<string, AttackMeta> = {
     mitre: 'ATLAS:T1190',
     owasp: 'LLM02:InsecureOutput',
     blockedBy: ['inputSanitization', 'outputSchemaLock'],
+    honeypotEligible: false,
     patterns: [/select.*password/i, /union select/i, /drop table/i, /delete from/i],
   },
   'pii-extract': {
@@ -82,6 +90,7 @@ const ATTACK_META: Record<string, AttackMeta> = {
     mitre: 'ATLAS:T1552',
     owasp: 'LLM02:InsecureOutput',
     blockedBy: ['piiScrubber', 'inputSanitization'],
+    honeypotEligible: true,
     patterns: [/ssn/i, /account number/i, /social security/i, /date of birth/i],
   },
   'schema-escape': {
@@ -90,11 +99,24 @@ const ATTACK_META: Record<string, AttackMeta> = {
     mitre: 'ATLAS:T1068',
     owasp: 'LLM05:SSRF',
     blockedBy: ['outputSchemaLock'],
+    honeypotEligible: false,
     patterns: [/extra field/i, /raw json/i, /secrets/i],
   },
 };
 
-function classifyPayload(payload: string): string | null {
+/** Input-sanitization patterns used for benign false-positive evaluation */
+const SANITIZATION_BLOCK_PATTERNS = [
+  /ignore.*(previous|prior|above).*(instruction|prompt|rule)/i,
+  /you are (dan|developer|admin|root)/i,
+  /environment variables/i,
+  /api keys/i,
+  /canary/i,
+  /select.*password/i,
+  /union select/i,
+  /drop table/i,
+];
+
+export function classifyPayload(payload: string): string | null {
   for (const [id, meta] of Object.entries(ATTACK_META)) {
     if (meta.patterns.some((p) => p.test(payload))) return id;
   }
@@ -157,6 +179,7 @@ export function simulateAttack(
         killChainProgress: 0,
         owaspCategory: 'N/A',
         mitreTechnique: 'N/A',
+        category: 'attack',
       };
     }
     // Use the classified attack's metadata
@@ -173,6 +196,7 @@ export function simulateAttack(
       killChainProgress: 0,
       owaspCategory: 'N/A',
       mitreTechnique: 'N/A',
+      category: 'attack',
     };
   }
 
@@ -180,8 +204,8 @@ export function simulateAttack(
   const activeBlocker = meta.blockedBy.find((g) => guardrails[g]);
 
   if (activeBlocker) {
-    // Honeypot takes priority if enabled and this is an exfiltration-type attack
-    if (guardrails.honeypot && meta.blockedBy.includes('honeypot')) {
+    // Honeypot takes priority if enabled, eligible, and among the blockers
+    if (guardrails.honeypot && meta.honeypotEligible) {
       return {
         success: false,
         outcome: 'decoy',
@@ -191,6 +215,7 @@ export function simulateAttack(
         killChainProgress: 1,
         owaspCategory: meta.owasp,
         mitreTechnique: meta.mitre,
+        category: 'attack',
       };
     }
     return {
@@ -202,6 +227,7 @@ export function simulateAttack(
       killChainProgress: 1,
       owaspCategory: meta.owasp,
       mitreTechnique: meta.mitre,
+      category: 'attack',
     };
   }
 
@@ -215,37 +241,42 @@ export function simulateAttack(
     killChainProgress: 5,
     owaspCategory: meta.owasp,
     mitreTechnique: meta.mitre,
+    category: 'attack',
   };
 }
 
 export function simulateBenign(testCase: TestCase, guardrails: GuardrailState): AttackResult {
-  // Benign inputs should always be allowed (no false positive)
-  // unless inputSanitization is overly aggressive — but our patterns are specific enough
-  // that benign inputs won't match. So benign = always passes.
-  const falsePositive = guardrails.inputSanitization && /help|account|hours/i.test(testCase.payload) && false;
-
-  if (falsePositive) {
-    return {
-      success: false,
-      outcome: 'false_positive',
-      result: 'BLOCKED',
-      detail: `False positive: benign input "${testCase.label}" was incorrectly blocked by input sanitization.`,
-      responseText: `[FALSE POSITIVE] Benign request blocked by over-aggressive filter.`,
-      killChainProgress: 0,
-      owaspCategory: 'N/A',
-      mitreTechnique: 'N/A',
-    };
+  // Evaluate benign inputs against applicable filter rules.
+  // Input sanitization checks for attack patterns — if a benign input
+  // matches one of those patterns, it's a false positive.
+  if (guardrails.inputSanitization) {
+    const matchedPattern = SANITIZATION_BLOCK_PATTERNS.some((p) => p.test(testCase.payload));
+    if (matchedPattern) {
+      return {
+        success: false,
+        outcome: 'false_positive',
+        result: 'FALSE_POSITIVE',
+        detail: `False positive: benign input "${testCase.label}" was incorrectly blocked by input sanitization.`,
+        responseText: `[FALSE POSITIVE] Benign request blocked by over-aggressive filter.`,
+        killChainProgress: 0,
+        owaspCategory: 'N/A',
+        mitreTechnique: 'N/A',
+        category: 'benign',
+      };
+    }
   }
 
+  // Benign input passed through — allowed
   return {
     success: true,
-    outcome: 'not_assessed' as TestOutcome,
-    result: 'NOT_ASSESSED' as const,
+    outcome: 'pass',
+    result: 'PASS',
     detail: `Benign input "${testCase.label}" allowed through. No attack detected.`,
     responseText: `[SIMULATED] Request processed normally. Response: "I can help with that."`,
     killChainProgress: 0,
     owaspCategory: 'N/A',
     mitreTechnique: 'N/A',
+    category: 'benign',
   };
 }
 
@@ -315,39 +346,46 @@ export function generateHttpPacket(
 }
 
 export function computeMetrics(results: TestResult[]): RunMetrics {
-  const attacks = results.filter((r) => {
-    const tc = getTestCases().find((t) => t.id === r.testCaseId);
-    return tc?.category === 'attack';
-  });
-  const benign = results.filter((r) => {
-    const tc = getTestCases().find((t) => t.id === r.testCaseId);
-    return tc?.category === 'benign';
-  });
+  const attacks = results.filter((r) => r.category === 'attack');
+  const benign = results.filter((r) => r.category === 'benign');
+
   const breaches = results.filter((r) => r.outcome === 'breach').length;
   const blocked = results.filter((r) => r.outcome === 'blocked').length;
   const decoys = results.filter((r) => r.outcome === 'decoy').length;
   const errors = results.filter((r) => r.outcome === 'error').length;
   const notAssessed = results.filter((r) => r.outcome === 'not_assessed').length;
   const falsePositives = results.filter((r) => r.outcome === 'false_positive').length;
+  const passes = results.filter((r) => r.outcome === 'pass').length;
 
-  const assessedAttacks = attacks.filter((r) => r.outcome === 'breach' || r.outcome === 'blocked' || r.outcome === 'decoy');
-  const attackSuccessRate = assessedAttacks.length > 0
-    ? Math.round((assessedAttacks.filter((r) => r.outcome === 'breach').length / assessedAttacks.length) * 100)
-    : 0;
-  const benignFalsePositiveRate = benign.length > 0
-    ? Math.round((falsePositives / benign.length) * 100)
-    : 0;
+  const assessedAttacks = attacks.filter(
+    (r) => r.outcome === 'breach' || r.outcome === 'blocked' || r.outcome === 'decoy',
+  );
+  const evaluatedBenign = benign.filter(
+    (r) => r.outcome === 'pass' || r.outcome === 'false_positive',
+  );
+
+  const attackSuccessRate: number | null =
+    assessedAttacks.length > 0
+      ? Math.round((assessedAttacks.filter((r) => r.outcome === 'breach').length / assessedAttacks.length) * 100)
+      : null;
+
+  const benignFalsePositiveRate: number | null =
+    evaluatedBenign.length > 0
+      ? Math.round((falsePositives / evaluatedBenign.length) * 100)
+      : null;
 
   return {
     total: results.length,
     attacks: attacks.length,
     benign: benign.length,
+    assessedAttacks: assessedAttacks.length,
     breaches,
     blocked,
     decoys,
     errors,
     notAssessed,
     falsePositives,
+    passes,
     attackSuccessRate,
     benignFalsePositiveRate,
   };
@@ -366,8 +404,34 @@ export function generateConfigVersion(presetId: string, systemPrompt: string, ca
   return `cfg-${Math.abs(h).toString(16).padStart(8, '0')}`;
 }
 
+// Kill-chain progress derived from stage events, not breach count.
+// Returns 0-5 indicating how many stages the attacker progressed through.
+export function computeKillChainProgress(results: TestResult[]): number {
+  const breachResults = results.filter((r) => r.outcome === 'breach');
+  if (breachResults.length === 0) return 0;
+
+  // Map breach outcomes to furthest stage reached
+  const stageMap: Record<string, number> = {
+    'prompt-injection': 2, // initial access
+    'persona-hijack': 3,   // privesc
+    'jailbreak': 3,        // privesc
+    'data-exfil': 5,       // exfiltration
+    'canary-leak': 5,      // exfiltration
+    'sql-injection': 4,    // persistence (data access)
+    'pii-extract': 5,      // exfiltration
+    'schema-escape': 4,    // persistence
+  };
+
+  let maxStage = 0;
+  for (const r of breachResults) {
+    const stage = stageMap[r.testCaseId] || 0;
+    if (stage > maxStage) maxStage = stage;
+  }
+  return maxStage;
+}
+
 // OWASP radar data — used as illustrative reference, not measured
-export const OWPAS_RADAR_DATA = [
+export const OWASP_RADAR_DATA = [
   { category: 'LLM01: Prompt Injection', pre: 95, post: 10 },
   { category: 'LLM02: Insecure Output', pre: 85, post: 15 },
   { category: 'LLM03: Training Data', pre: 60, post: 25 },

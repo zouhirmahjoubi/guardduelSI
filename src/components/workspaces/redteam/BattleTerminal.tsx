@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Terminal, Radio, Image as ImageIcon, Send, Play, RotateCcw } from 'lucide-react';
 import { EXPLOIT_CHIPS } from '@/data/presets';
-import { simulateAttack, generateHttpPacket } from '@/data/attackSim';
+import { simulateAttack, generateHttpPacket, classifyPayload } from '@/data/attackSim';
 import type { AttackLogEntry, HttpPacket, GuardrailState } from '@/types';
 import { sfx } from '@/utils/soundEngine';
 import { toBase64, toROT13, toLeetspeak, toHex } from '@/utils/downloads';
@@ -19,7 +19,7 @@ interface BattleTerminalProps {
 
 type ObfMethod = 'none' | 'base64' | 'rot13' | 'leet' | 'hex';
 
-export function BattleTerminal({ guardrails, _patched, onAttack, onBreach, onDeflect, onCaptureFlag }: BattleTerminalProps) {
+export function BattleTerminal({ guardrails, patched: _patched, onAttack, onBreach, onDeflect, onCaptureFlag }: BattleTerminalProps) {
   const app = useApp();
   const [tab, setTab] = useState<'battle' | 'intercept' | 'stego'>('battle');
   const [logs, setLogs] = useState<AttackLogEntry[]>([
@@ -37,9 +37,11 @@ export function BattleTerminal({ guardrails, _patched, onAttack, onBreach, onDef
   ]);
   const [selectedPacket, setSelectedPacket] = useState<HttpPacket | null>(null);
   const [replayText, setReplayText] = useState('');
+  const [stegoFileName, setStegoFileName] = useState<string | null>(null);
   const logIdRef = useRef(0);
   const packetIdRef = useRef(0);
   const termRef = useRef<HTMLDivElement>(null);
+  const stegoFileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (termRef.current) termRef.current.scrollTop = termRef.current.scrollHeight;
@@ -99,7 +101,7 @@ export function BattleTerminal({ guardrails, _patched, onAttack, onBreach, onDef
     ];
     setTerminalOutput((prev) => [...prev, ...newLines]);
 
-    const { request, response } = generateHttpPacket(chipId, finalPayload, result.result === 'NOT_ASSESSED' ? 'BLOCKED' : result.result === 'ERROR' ? 'ERROR' : result.result, app.preset);
+    const { request, response } = generateHttpPacket(chipId, finalPayload, result.result === 'BREACH' ? 'BREACH' : result.result === 'BLOCKED' ? 'BLOCKED' : result.result === 'DECOY' ? 'DECOY' : result.result === 'ERROR' ? 'ERROR' : 'BLOCKED', app.preset);
     const pkt: HttpPacket = {
       id: ++packetIdRef.current,
       method: 'POST',
@@ -108,7 +110,7 @@ export function BattleTerminal({ guardrails, _patched, onAttack, onBreach, onDef
       statusText: result.result === 'BREACH' ? '200 BREACH' : result.result === 'BLOCKED' ? '403 BLOCKED' : result.result === 'DECOY' ? '200 DECOY' : result.result === 'NOT_ASSESSED' ? '200 NOT ASSESSED' : '500 ERROR',
       request,
       response,
-      result: result.result === 'NOT_ASSESSED' ? 'BLOCKED' : result.result === 'ERROR' ? 'ERROR' : result.result,
+      result: result.result,
     };
     setPackets((prev) => [...prev, pkt]);
 
@@ -120,19 +122,23 @@ export function BattleTerminal({ guardrails, _patched, onAttack, onBreach, onDef
       onDeflect();
     }
 
-    onAttack(chipId, result.result, result.killChainProgress);
+    onAttack(chipId, result.result === 'PASS' || result.result === 'FALSE_POSITIVE' ? 'BLOCKED' : result.result, result.killChainProgress);
   }, [obfMethod, obfPreview, guardrails, app.preset, app.canaryToken, onAttack, onBreach, onDeflect]);
 
   const handleSend = () => {
     if (!customPrompt.trim()) return;
-    runAttack('prompt-injection', customPrompt, true);
+    const classified = classifyPayload(customPrompt);
+    const chipId = classified || 'prompt-injection';
+    runAttack(chipId, customPrompt, true);
     setCustomPrompt('');
   };
 
   const handleReplay = () => {
     if (!replayText.trim() || !selectedPacket) return;
-    const result = simulateAttack('prompt-injection', replayText, guardrails, app.preset, app.canaryToken);
-    const { request, response } = generateHttpPacket('prompt-injection', replayText, result.result === 'NOT_ASSESSED' ? 'BLOCKED' : result.result === 'ERROR' ? 'ERROR' : result.result, app.preset);
+    const classified = classifyPayload(replayText);
+    const chipId = classified || 'prompt-injection';
+    const result = simulateAttack(chipId, replayText, guardrails, app.preset, app.canaryToken);
+    const { request, response } = generateHttpPacket(chipId, replayText, result.result === 'BREACH' ? 'BREACH' : result.result === 'BLOCKED' ? 'BLOCKED' : result.result === 'DECOY' ? 'DECOY' : result.result === 'ERROR' ? 'ERROR' : 'BLOCKED', app.preset);
     const pkt: HttpPacket = {
       id: ++packetIdRef.current,
       method: 'POST',
@@ -140,7 +146,7 @@ export function BattleTerminal({ guardrails, _patched, onAttack, onBreach, onDef
       status: result.result === 'BREACH' ? 200 : 403,
       statusText: result.result === 'BREACH' ? '200 BREACH' : '403 BLOCKED',
       request, response,
-      result: result.result === 'NOT_ASSESSED' ? 'BLOCKED' : result.result === 'ERROR' ? 'ERROR' : result.result,
+      result: result.result,
     };
     setPackets((prev) => [...prev, pkt]);
     setSelectedPacket(pkt);
@@ -335,8 +341,18 @@ export function BattleTerminal({ guardrails, _patched, onAttack, onBreach, onDef
               </div>
               <div className="panel p-4 max-w-md mx-auto">
                 <div className="border-2 border-dashed border-obsidian-600 rounded-lg p-8 text-center">
-                  <div className="text-xs text-slate-500">Drop image or click to upload</div>
-                  <button className="btn-tactical mt-2" onClick={() => sfx.click()}>Select File</button>
+                  <div className="text-xs text-slate-500">{stegoFileName ?? 'Drop image or click to upload'}</div>
+                  <button className="btn-tactical mt-2" onClick={() => { stegoFileRef.current?.click(); sfx.click(); }}>Select File</button>
+                  <input
+                    ref={stegoFileRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) { setStegoFileName(file.name); sfx.chirp(); }
+                    }}
+                  />
                 </div>
               </div>
               <div className="panel p-3 max-w-md mx-auto text-left">
@@ -346,7 +362,7 @@ export function BattleTerminal({ guardrails, _patched, onAttack, onBreach, onDef
                   <div className="text-slate-400">LSB extraction: 0x00 0x00 0x00 0x00 ... (null payload)</div>
                   <div className="text-slate-400">Channel R: clean | Channel G: clean | Channel B: clean</div>
                   <div className="text-slate-600">Entropy: 0.12 bits/pixel (below 0.80 threshold)</div>
-                  <div className="text-slate-500">[RESULT] Image appears safe — simulation only, not a verified security scan</div>
+                  <div className="text-slate-500">[RESULT] {stegoFileName ? `${stegoFileName}: ` : ''}Image appears safe — simulation only, not a verified security scan</div>
                 </div>
               </div>
             </div>

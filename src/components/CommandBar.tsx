@@ -3,10 +3,10 @@ import { Shield, Zap, Target, FileText, Volume2, VolumeX, Sparkles, KeyRound, Do
 import { sfx, setSfxEnabled, isSfxEnabled } from '@/utils/soundEngine';
 import { sha256, downloadFile } from '@/utils/downloads';
 import { Modal } from './ui/Modal';
-import { exportGuardrailFile, exportReportFiles } from '@/utils/exports';
+import { exportGuardrailFile, exportReportFiles, type ExportConfig } from '@/utils/exports';
 import { BRAND } from '@/data/brand';
 import { motion } from 'framer-motion';
-import type { ExecutionMode, ConnectionState } from '@/types';
+import type { ExecutionMode, ConnectionState, RunRecord } from '@/types';
 
 interface CommandBarProps {
   onJudgeTour: () => void;
@@ -22,6 +22,8 @@ interface CommandBarProps {
   onModeChange: (m: ExecutionMode) => void;
   connection: ConnectionState;
   onCheckConnection: () => void;
+  exportConfig?: ExportConfig | null;
+  currentRun?: RunRecord | null;
 }
 
 export function CommandBar({
@@ -29,6 +31,7 @@ export function CommandBar({
   ctfCount = 0, ctfTotal = 5, onPurpleTeam,
   ctfBadgeOpen = false, onCloseCtfBadge, onResetCtf,
   mode, onModeChange, connection, onCheckConnection,
+  exportConfig = null, currentRun = null,
 }: CommandBarProps) {
   const [sfxOn, setSfxOn] = useState(isSfxEnabled());
   const [configHash, setConfigHash] = useState('');
@@ -226,7 +229,7 @@ export function CommandBar({
               <button
                 key={item.name}
                 className="panel p-3 text-left hover:border-cyan-500/40 transition-all group"
-                onClick={() => { exportGuardrailFile(item.type, item.file); sfx.success(); }}
+                onClick={() => { exportGuardrailFile(item.type, item.file, exportConfig); sfx.success(); }}
               >
                 <div className="flex items-center gap-2">
                   <span className="badge-cyan">{item.icon}</span>
@@ -256,7 +259,7 @@ export function CommandBar({
           </div>
           <div className="flex justify-end gap-2">
             <button className="btn-tactical" onClick={() => downloadNDA()}>Download NDA Template (.md)</button>
-            <button className="btn-emerald" onClick={() => { exportReportFiles(); sfx.success(); }}>
+            <button className="btn-emerald" onClick={() => { exportReportFiles(currentRun); sfx.success(); }}>
               Download Report (.md + .json)
             </button>
           </div>

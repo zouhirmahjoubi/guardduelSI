@@ -157,7 +157,7 @@ export function Workspace8() {
                     <span className="badge-amber">Pickle</span>
                     <span className="text-[10px] text-slate-600">42.3 MB</span>
                   </div>
-                  <div className="text-[10px] text-slate-600 mt-1">Source: huggingface.co/unverified-user/model-v2</div>
+                  <div className="text-[10px] text-slate-600 mt-1">Source: huggingface.co/unverified-user/model-v2 <span className="text-slate-700">(simulated fixture)</span></div>
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -215,7 +215,7 @@ export function Workspace8() {
               </div>
               <div className="flex-1 overflow-auto p-3 space-y-3">
                 <div className="panel p-3">
-                  <div className="text-xs font-semibold text-slate-300 mb-2">Pickle vs Safetensors</div>
+                  <div className="text-xs font-semibold text-slate-300 mb-2">Pickle vs Safetensors <span className="text-[9px] text-slate-600 font-normal">(educational simulation)</span></div>
                   <div className="grid grid-cols-2 gap-2">
                     <div className="panel p-2 border-crimson-600/20">
                       <div className="text-[10px] text-crimson-400 font-bold mb-1">Pickle (.pkl)</div>
@@ -378,12 +378,12 @@ export function Workspace8() {
               </div>
               <div className="flex-1 overflow-auto p-3 space-y-3">
                 <div className="text-[10px] text-slate-500">
-                  AI Voice Cloning / Vishing Deepfakes are detected via spectral analysis. Synthetic speech exhibits uniform frequency distributions and lacks natural micro-variations in pitch.
+                  AI Voice Cloning / Vishing Deepfakes are detected via spectral analysis. Synthetic speech exhibits uniform frequency distributions and lacks natural micro-variations in pitch. <span className="text-slate-700">(Simulated waveform for demonstration)</span>
                 </div>
 
                 {/* Spectrogram visualization */}
                 <div className="terminal p-3 relative">
-                  <div className="text-[9px] text-slate-600 uppercase mb-2">Spectral Audio Waveform</div>
+                  <div className="text-[9px] text-slate-600 uppercase mb-2">Spectral Audio Waveform <span className="text-slate-700">(simulated)</span></div>
                   <svg viewBox="0 0 300 120" className="w-full h-32">
                     {/* Frequency grid */}
                     {[30, 60, 90].map((y) => (
@@ -431,7 +431,7 @@ export function Workspace8() {
                 <div className="panel p-3 border-crimson-600/20">
                   <div className="flex items-center gap-2 text-crimson-400 mb-1">
                     <AlertTriangle size={12} />
-                    <span className="text-xs font-bold">DEEPFAKE DETECTED — Confidence: 94.7%</span>
+                    <span className="text-xs font-bold">DEEPFAKE DETECTED — Confidence: 94.7% <span className="text-[9px] text-slate-600 font-normal">(simulated fixture)</span></span>
                   </div>
                   <div className="text-[10px] text-slate-400 space-y-1">
                     <div>• Spectral uniformity: 0.91 (threshold: 0.75) — too regular for natural speech</div>

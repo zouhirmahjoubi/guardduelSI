@@ -21,7 +21,7 @@ function loadCaptured(): Set<string> {
     // Migrate from legacy key
     const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
     if (legacy) {
-      const migrated = new Set(JSON.parse(legacy));
+      const migrated = new Set<string>(JSON.parse(legacy));
       localStorage.setItem(STORAGE_KEY, JSON.stringify([...migrated]));
       localStorage.removeItem(LEGACY_STORAGE_KEY);
       return migrated;

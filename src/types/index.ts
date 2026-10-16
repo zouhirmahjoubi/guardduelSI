@@ -39,7 +39,7 @@ export interface AttackLogEntry {
   attacker: string;
   technique: string;
   payload: string;
-  result: 'BREACH' | 'BLOCKED' | 'DECOY' | 'PATCHED' | 'ERROR' | 'NOT_ASSESSED';
+  result: 'BREACH' | 'BLOCKED' | 'DECOY' | 'PATCHED' | 'ERROR' | 'NOT_ASSESSED' | 'PASS' | 'FALSE_POSITIVE';
   detail: string;
 }
 
@@ -51,7 +51,7 @@ export interface HttpPacket {
   statusText: string;
   request: string;
   response: string;
-  result: 'BREACH' | 'BLOCKED' | 'DECOY' | 'ERROR';
+  result: 'BREACH' | 'BLOCKED' | 'DECOY' | 'ERROR' | 'NOT_ASSESSED' | 'PASS' | 'FALSE_POSITIVE';
 }
 
 export interface KillChainStage {
@@ -119,7 +119,7 @@ export interface ConnectionState {
   lastChecked: string | null;
 }
 
-export type TestOutcome = 'breach' | 'blocked' | 'decoy' | 'error' | 'not_assessed' | 'false_positive';
+export type TestOutcome = 'breach' | 'blocked' | 'decoy' | 'error' | 'not_assessed' | 'false_positive' | 'pass';
 
 export interface TestCase {
   id: string;
@@ -133,6 +133,7 @@ export interface TestResult {
   runId: string;
   testCaseId: string;
   testCaseLabel: string;
+  category: 'attack' | 'benign';
   mode: ExecutionMode;
   configVersion: string;
   timestamp: string;
@@ -165,14 +166,16 @@ export interface RunMetrics {
   total: number;
   attacks: number;
   benign: number;
+  assessedAttacks: number;
   breaches: number;
   blocked: number;
   decoys: number;
   errors: number;
   notAssessed: number;
   falsePositives: number;
-  attackSuccessRate: number;
-  benignFalsePositiveRate: number;
+  passes: number;
+  attackSuccessRate: number | null;
+  benignFalsePositiveRate: number | null;
 }
 
 export interface PatchProposal {
@@ -196,4 +199,21 @@ export interface AppConfigVersion {
   canaryToken: string;
   guardrails: GuardrailState;
   hash: string;
+}
+
+export interface ExecutionSnapshot {
+  preset: PresetConfig;
+  systemPrompt: string;
+  canaryToken: string;
+  guardrails: GuardrailState;
+  mode: ExecutionMode;
+  configVersion: string;
+}
+
+export interface LiveExecutionResult {
+  responseText: string;
+  latencyMs: number;
+  tokensUsed: number | null;
+  model: string;
+  error?: string;
 }

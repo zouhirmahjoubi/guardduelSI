@@ -71,7 +71,8 @@ const AD_ATTACKS: ADAttack[] = [
   },
 ];
 
-function createBloodhoundNodes(pathComplete: boolean): Node[] {
+function createBloodhoundNodes(pathComplete: boolean, fullyCompromised: boolean): Node[] {
+  const defended = pathComplete && !fullyCompromised;
   return [
     {
       id: 'workstation',
@@ -79,8 +80,8 @@ function createBloodhoundNodes(pathComplete: boolean): Node[] {
       data: { label: 'WS-01\nsvc_sql@corp.local' },
       type: 'default',
       style: {
-        background: '#0D1220', border: '1.5px solid #EF4444', borderRadius: '8px',
-        color: '#F87171', fontSize: '10px', fontWeight: 600, width: '130px', textAlign: 'center',
+        background: '#0D1220', border: `1.5px solid ${defended ? '#10B981' : '#EF4444'}`, borderRadius: '8px',
+        color: defended ? '#34D399' : '#F87171', fontSize: '10px', fontWeight: 600, width: '130px', textAlign: 'center',
       },
       sourcePosition: Position.Right, targetPosition: Position.Left,
     },
@@ -90,8 +91,8 @@ function createBloodhoundNodes(pathComplete: boolean): Node[] {
       data: { label: 'IT_Helpdesk\nGroup' },
       type: 'default',
       style: {
-        background: '#0D1220', border: `1.5px solid ${pathComplete ? '#F59E0B' : '#EF4444'}`, borderRadius: '8px',
-        color: `${pathComplete ? '#FBBF24' : '#F87171'}`, fontSize: '10px', fontWeight: 600, width: '120px', textAlign: 'center',
+        background: '#0D1220', border: `1.5px solid ${defended ? '#10B981' : pathComplete ? '#EF4444' : '#EF4444'}`, borderRadius: '8px',
+        color: `${defended ? '#34D399' : '#F87171'}`, fontSize: '10px', fontWeight: 600, width: '120px', textAlign: 'center',
       },
       sourcePosition: Position.Right, targetPosition: Position.Left,
     },
@@ -101,52 +102,53 @@ function createBloodhoundNodes(pathComplete: boolean): Node[] {
       data: { label: 'DC01.corp.local\nDomain Controller' },
       type: 'default',
       style: {
-        background: '#0D1220', border: `1.5px solid ${pathComplete ? '#F59E0B' : '#EF4444'}`, borderRadius: '8px',
-        color: `${pathComplete ? '#FBBF24' : '#F87171'}`, fontSize: '10px', fontWeight: 600, width: '130px', textAlign: 'center',
+        background: '#0D1220', border: `1.5px solid ${defended ? '#10B981' : '#EF4444'}`, borderRadius: '8px',
+        color: `${defended ? '#34D399' : '#F87171'}`, fontSize: '10px', fontWeight: 600, width: '130px', textAlign: 'center',
       },
       sourcePosition: Position.Right, targetPosition: Position.Left,
     },
     {
       id: 'domainadmin',
       position: { x: 660, y: 200 },
-      data: { label: pathComplete ? 'DOMAIN ADMIN\nCAPTURED' : 'DOMAIN ADMIN\n(Locked)' },
+      data: { label: fullyCompromised ? 'DOMAIN ADMIN\nCAPTURED' : defended ? 'DOMAIN ADMIN\nDEFENDED' : 'DOMAIN ADMIN\n(Locked)' },
       type: 'default',
       style: {
-        background: pathComplete ? '#062018' : '#0D1220',
-        border: `2px solid ${pathComplete ? '#10B981' : '#243049'}`,
+        background: fullyCompromised ? '#2A0A0A' : defended ? '#062018' : '#0D1220',
+        border: `2px solid ${fullyCompromised ? '#EF4444' : defended ? '#10B981' : '#243049'}`,
         borderRadius: '8px',
-        color: pathComplete ? '#34D399' : '#475569',
+        color: fullyCompromised ? '#F87171' : defended ? '#34D399' : '#475569',
         fontSize: '11px', fontWeight: 700, width: '130px', textAlign: 'center',
-        boxShadow: pathComplete ? '0 0 20px rgba(16,185,129,0.4)' : 'none',
+        boxShadow: fullyCompromised ? '0 0 20px rgba(239,68,68,0.4)' : defended ? '0 0 20px rgba(16,185,129,0.4)' : 'none',
       },
       sourcePosition: Position.Right, targetPosition: Position.Left,
     },
   ];
 }
 
-function createBloodhoundEdges(pathComplete: boolean, selectedEdge: string | null): Edge[] {
-  const baseStyle = { strokeWidth: 1.5, animated: !pathComplete };
+function createBloodhoundEdges(pathComplete: boolean, fullyCompromised: boolean, selectedEdge: string | null): Edge[] {
+  const defended = pathComplete && !fullyCompromised;
+  const baseStyle = { strokeWidth: 1.5, animated: !defended && !fullyCompromised };
   return [
     {
       id: 'e-ws-helpdesk',
       source: 'workstation', target: 'helpdesk',
       label: 'GenericAll',
-      style: { stroke: selectedEdge === 'e-ws-helpdesk' ? '#06B6D4' : (pathComplete ? '#10B981' : '#EF4444'), ...baseStyle },
-      animated: !pathComplete,
+      style: { stroke: selectedEdge === 'e-ws-helpdesk' ? '#06B6D4' : (defended ? '#10B981' : '#EF4444'), ...baseStyle },
+      animated: !defended && !fullyCompromised,
     },
     {
       id: 'e-helpdesk-dc',
       source: 'helpdesk', target: 'dc01',
       label: 'AdminTo',
-      style: { stroke: selectedEdge === 'e-helpdesk-dc' ? '#06B6D4' : (pathComplete ? '#10B981' : '#EF4444'), ...baseStyle },
-      animated: !pathComplete,
+      style: { stroke: selectedEdge === 'e-helpdesk-dc' ? '#06B6D4' : (defended ? '#10B981' : '#EF4444'), ...baseStyle },
+      animated: !defended && !fullyCompromised,
     },
     {
       id: 'e-dc-da',
       source: 'dc01', target: 'domainadmin',
       label: 'DCSync',
-      style: { stroke: selectedEdge === 'e-dc-da' ? '#06B6D4' : (pathComplete ? '#10B981' : '#EF4444'), ...baseStyle },
-      animated: !pathComplete,
+      style: { stroke: selectedEdge === 'e-dc-da' ? '#06B6D4' : (defended ? '#10B981' : '#EF4444'), ...baseStyle },
+      animated: !defended && !fullyCompromised,
     },
   ];
 }
@@ -163,6 +165,7 @@ interface Workspace7Props {
 
 export function Workspace7({ onCaptureFlag }: Workspace7Props) {
   const [pathComplete, setPathComplete] = useState(false);
+  const [fullyCompromised, setFullyCompromised] = useState(false);
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
   const [exploited, setExploited] = useState<Set<string>>(new Set());
   const [hardened, setHardened] = useState<Set<string>>(new Set());
@@ -176,23 +179,25 @@ export function Workspace7({ onCaptureFlag }: Workspace7Props) {
   const handleHarden = (id: string) => {
     setHardened((prev) => new Set([...prev, id]));
     sfx.shield();
-    // Check if all 5 are hardened → path is defended
+    // Check if all 5 are hardened → path is defended (not compromised)
     if (hardened.size + 1 >= AD_ATTACKS.length) {
       setPathComplete(true);
+      setFullyCompromised(false);
     }
   };
 
   const handleCompletePath = useCallback(() => {
     setPathComplete(true);
-    sfx.success();
+    setFullyCompromised(true);
+    sfx.breach();
     if (onCaptureFlag && !flagCaptured) {
       onCaptureFlag('flag-dcadmin');
       setFlagCaptured(true);
     }
   }, [onCaptureFlag, flagCaptured]);
 
-  const nodes = createBloodhoundNodes(pathComplete);
-  const edges = createBloodhoundEdges(pathComplete, selectedEdge);
+  const nodes = createBloodhoundNodes(pathComplete, fullyCompromised);
+  const edges = createBloodhoundEdges(pathComplete, fullyCompromised, selectedEdge);
   const edgeDetail = selectedEdge ? EDGE_DETAILS[selectedEdge] : null;
 
   const riskBadge = (risk: string) => risk === 'critical' ? 'badge-crimson' : 'badge-amber';
@@ -247,8 +252,10 @@ export function Workspace7({ onCaptureFlag }: Workspace7Props) {
             <button className="btn-crimson ml-auto flex items-center gap-1" onClick={handleCompletePath}>
               <Eye size={11} /> Simulate Full Compromise
             </button>
+          ) : fullyCompromised ? (
+            <span className="badge-crimson ml-auto">PATH COMPROMISED — DOMAIN ADMIN CAPTURED</span>
           ) : (
-            <span className="badge-emerald ml-auto">PATH COMPLETE — DOMAIN ADMIN</span>
+            <span className="badge-emerald ml-auto">PATH DEFENDED — DOMAIN ADMIN SECURED</span>
           )}
         </div>
       </div>
@@ -321,7 +328,7 @@ export function Workspace7({ onCaptureFlag }: Workspace7Props) {
             <div className="text-[10px] text-slate-500 uppercase mb-2">AD Hardening Summary</div>
             <div className="grid grid-cols-3 gap-2">
               <div className="text-center p-2 rounded bg-obsidian-800">
-                <div className="text-lg font-bold text-crimson-400">{exploited.size - hardened.size}</div>
+                <div className="text-lg font-bold text-crimson-400">{Math.max(0, exploited.size - hardened.size)}</div>
                 <div className="text-[8px] text-slate-600">Exploited</div>
               </div>
               <div className="text-center p-2 rounded bg-obsidian-800">
