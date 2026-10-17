@@ -218,6 +218,7 @@ export interface LiveExecutionResult {
   /** Set by the proxy when a server-side guardrail stopped the request or response */
   blocked: boolean;
   guardrail: string | null;
+  stage: 'input' | 'output' | null;
   canaryLeaked: boolean;
   error?: string;
 }
